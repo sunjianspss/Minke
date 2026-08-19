@@ -1,0 +1,31 @@
+// >>> minke-fork
+// src/fork 是 fork 独有的 host 代码，它 import 的全是 @deepseek-ai/*。
+// 那些包名只在 vendor/deepseek-harness/tsconfig.base.json 的 paths + 项目引用
+// 下才解析得到，而 tsconfig.host.json 继承的是 Minke 根 tsconfig（paths 会被
+// 整体替换掉，没有 @deepseek-ai/* 的映射）。所以 src/fork 单开一个工程，
+// 抄 packages/model-runtime/tsconfig.json 的姿势——这也让 tsconfig.host.json
+// 保持和上游逐字一致，fork 在那个文件上零改动。
+{
+  "extends": "../../vendor/deepseek-harness/tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "rootDir": "src/fork",
+    "tsBuildInfoFile": "./lib/tsconfig.fork.tsbuildinfo"
+  },
+  "include": [
+    "src/fork"
+  ],
+  "references": [
+    {
+      "path": "../../vendor/deepseek-harness/vendor/cordis"
+    },
+    {
+      "path": "../../vendor/deepseek-harness/packages/mcp/mcp-client"
+    },
+    {
+      "path": "../../vendor/deepseek-harness/packages/util/home-paths"
+    }
+  ]
+}
+// <<< minke-fork

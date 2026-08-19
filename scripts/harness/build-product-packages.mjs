@@ -282,6 +282,19 @@ await Promise.all([
     tsconfig: tsconfigPath,
     sourcemap: true,
   }),
+  // >>> minke-fork: fork 自有 host 插件的入口，与上游 overlay entry 并列，互不影响
+  build({
+    entryPoints: [join(overlayPackageRoot, "src", "fork", "index.ts")],
+    outfile: join(overlayOutputRoot, "fork.js"),
+    bundle: true,
+    packages: "external",
+    format: "esm",
+    platform: "node",
+    target: "es2022",
+    tsconfig: tsconfigPath,
+    sourcemap: true,
+  }),
+  // <<< minke-fork
   build({
     entryPoints: [
       join(
