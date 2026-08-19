@@ -1,28 +1,105 @@
 /*
- * Fork 本地维护的自定义皮肤，document_start 注入。
+ * Fork 本地维护的皮肤，document_start 注入。
  *
  * 与 early.css 解耦，上游更新 early.css 时这里不会冲突。
  * manifest 里排在 early.css 之后，才能盖掉它的 background-color: transparent。
- * 背景图 URL 由 early.js 写进 --minke-background-image，
- * 因为相对路径会解析到 Harness 的 HTTP origin 而不是扩展。
+ *
+ * 主题由 skin.js 写在 <html data-minke-skin> 上。没有属性时走 photo，
+ * 这样脚本执行前的第一帧就已经是最终样式，不会闪。
  */
 
-body {
-  background-color: #d9e1e5 !important;
-  background-image:
+:root {
+  --minke-skin-color: #d9e1e5;
+  --minke-skin-image:
     linear-gradient(#f8fafc6b, #f8fafc6b),
-    var(--minke-background-image, none) !important;
-  background-position: center, center 76% !important;
-  background-repeat: no-repeat !important;
-  background-size: cover !important;
-  background-attachment: fixed !important;
+    var(--minke-background-image, none);
+  --minke-skin-position: center, center 76%;
+  --minke-skin-size: cover;
 }
 
 @media (prefers-color-scheme: dark) {
-  body {
-    background-color: #0b1220 !important;
-    background-image:
+  :root {
+    --minke-skin-color: #0b1220;
+    --minke-skin-image:
       linear-gradient(#02061785, #02061785),
-      var(--minke-background-image, none) !important;
+      var(--minke-background-image, none);
   }
+}
+
+/* aurora：纯渐变，不加载图片，最省资源的一档。 */
+[data-minke-skin="aurora"] {
+  --minke-skin-color: #e8edf5;
+  --minke-skin-image:
+    radial-gradient(60% 45% at 18% 12%, #a5c8ff9e, transparent),
+    radial-gradient(55% 40% at 82% 22%, #ffc3e29c, transparent),
+    radial-gradient(70% 55% at 50% 100%, #b8f2e69e, transparent);
+  --minke-skin-position: center;
+  --minke-skin-size: cover;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-minke-skin="aurora"] {
+    --minke-skin-color: #070b18;
+    --minke-skin-image:
+      radial-gradient(60% 45% at 18% 12%, #24407a8c, transparent),
+      radial-gradient(55% 40% at 82% 22%, #5a2a5c8c, transparent),
+      radial-gradient(70% 55% at 50% 100%, #14504a8c, transparent);
+  }
+}
+
+/* paper：暖白纸面，长时间阅读用。 */
+[data-minke-skin="paper"] {
+  --minke-skin-color: #f4efe6;
+  --minke-skin-image: linear-gradient(#fffdf8b8, #f0e8dab8);
+  --minke-skin-position: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-minke-skin="paper"] {
+    --minke-skin-color: #17161a;
+    --minke-skin-image: linear-gradient(#1e1c21b8, #131217b8);
+  }
+}
+
+/* mono：中性灰，接近上游默认观感但仍带一层底色。 */
+[data-minke-skin="mono"] {
+  --minke-skin-color: #e7e9ec;
+  --minke-skin-image: linear-gradient(#ffffff80, #dfe3e880);
+  --minke-skin-position: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-minke-skin="mono"] {
+    --minke-skin-color: #121316;
+    --minke-skin-image: linear-gradient(#1c1e2280, #0e0f1280);
+  }
+}
+
+body {
+  background-color: var(--minke-skin-color) !important;
+  background-image: var(--minke-skin-image) !important;
+  background-position: var(--minke-skin-position) !important;
+  background-repeat: no-repeat !important;
+  background-size: var(--minke-skin-size) !important;
+  background-attachment: fixed !important;
+}
+
+/* off：完全让位给上游，early.css 的透明背景重新生效。 */
+[data-minke-skin="off"] body {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+[data-minke-skin-toast] {
+  position: fixed;
+  z-index: 2147483647;
+  right: 18px;
+  bottom: 18px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgb(15 23 42 / 78%);
+  color: #f8fafc;
+  font: 500 12px/1.4 system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  pointer-events: none;
 }
