@@ -9,8 +9,8 @@ export interface AppProps {
 
 export default function App({ locale }: AppProps) {
   return (
-    <main className="minke-bootstrap grid min-h-screen place-items-center">
-      <div className="minke-bootstrap__panel flex flex-col items-center gap-5">
+    <main className="grid min-h-screen place-items-center bg-transparent">
+      <div className="flex flex-col items-center gap-5">
         <img
           className="size-20 rounded-[22%] shadow-2xl shadow-black/30"
           src="./minke.svg"

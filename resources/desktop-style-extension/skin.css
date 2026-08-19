@@ -1,0 +1,28 @@
+/*
+ * Fork 本地维护的自定义皮肤，document_start 注入。
+ *
+ * 与 early.css 解耦，上游更新 early.css 时这里不会冲突。
+ * manifest 里排在 early.css 之后，才能盖掉它的 background-color: transparent。
+ * 背景图 URL 由 early.js 写进 --minke-background-image，
+ * 因为相对路径会解析到 Harness 的 HTTP origin 而不是扩展。
+ */
+
+body {
+  background-color: #d9e1e5 !important;
+  background-image:
+    linear-gradient(#f8fafc6b, #f8fafc6b),
+    var(--minke-background-image, none) !important;
+  background-position: center, center 76% !important;
+  background-repeat: no-repeat !important;
+  background-size: cover !important;
+  background-attachment: fixed !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #0b1220 !important;
+    background-image:
+      linear-gradient(#02061785, #02061785),
+      var(--minke-background-image, none) !important;
+  }
+}

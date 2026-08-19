@@ -1,0 +1,56 @@
+/*
+ * Fork 本地维护的自定义皮肤。
+ *
+ * 与上游文件解耦：styles.css 只保留一行 @import，App.tsx 零改动。
+ * 规则刻意不放进 @layer，这样上游新增的 Tailwind 工具类不会盖掉皮肤。
+ */
+
+:root {
+  --minke-background-color: #d9e1e5;
+  --minke-background-scrim: rgb(248 250 252 / 42%);
+  --minke-bootstrap-panel-bg: rgb(255 255 255 / 58%);
+  --minke-bootstrap-panel-border: rgb(255 255 255 / 72%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --minke-background-color: #0b1220;
+    --minke-background-scrim: rgb(2 6 23 / 52%);
+    --minke-bootstrap-panel-bg: rgb(15 23 42 / 58%);
+    --minke-bootstrap-panel-border: rgb(255 255 255 / 16%);
+  }
+}
+
+body {
+  background-color: var(--minke-background-color);
+  background-image:
+    linear-gradient(
+      var(--minke-background-scrim),
+      var(--minke-background-scrim)
+    ),
+    url("../../resources/desktop-style-extension/minke-background.jpeg");
+  background-position: center, center 76%;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
+}
+
+/*
+ * 用结构选择器替代往 App.tsx 里加 className，换取上游文件零 diff。
+ * 代价是上游改结构时皮肤会静默失效，所以 tests/minke-skin.test.mjs
+ * 锁住了这里依赖的 #root > main > div 结构，改动会让测试失败。
+ */
+#root > main {
+  padding: 32px;
+}
+
+#root > main > div {
+  min-width: 180px;
+  padding: 30px 38px;
+  border: 1px solid var(--minke-bootstrap-panel-border);
+  border-radius: 28px;
+  background: var(--minke-bootstrap-panel-bg);
+  box-shadow: 0 24px 70px rgb(15 23 42 / 24%);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+}
