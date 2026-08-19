@@ -3,6 +3,10 @@
 @layer base {
   :root {
     color-scheme: light dark;
+    --minke-background-color: #d9e1e5;
+    --minke-background-scrim: rgb(248 250 252 / 42%);
+    --minke-bootstrap-panel-bg: rgb(255 255 255 / 58%);
+    --minke-bootstrap-panel-border: rgb(255 255 255 / 72%);
     --minke-bootstrap-status-color: #475569;
     --minke-bootstrap-pulse-color: #2563eb;
   }
@@ -16,10 +20,25 @@
 
   body {
     margin: 0;
+    background-color: var(--minke-background-color);
+    background-image:
+      linear-gradient(
+        var(--minke-background-scrim),
+        var(--minke-background-scrim)
+      ),
+      url("../../resources/desktop-style-extension/minke-background.jpeg");
+    background-position: center, center 76%;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-attachment: fixed;
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
+      --minke-background-color: #0b1220;
+      --minke-background-scrim: rgb(2 6 23 / 52%);
+      --minke-bootstrap-panel-bg: rgb(15 23 42 / 58%);
+      --minke-bootstrap-panel-border: rgb(255 255 255 / 16%);
       --minke-bootstrap-status-color: #cbd5e1;
       --minke-bootstrap-pulse-color: #93c5fd;
     }
@@ -27,6 +46,21 @@
 }
 
 @layer components {
+  .minke-bootstrap {
+    padding: 32px;
+  }
+
+  .minke-bootstrap__panel {
+    min-width: 180px;
+    padding: 30px 38px;
+    border: 1px solid var(--minke-bootstrap-panel-border);
+    border-radius: 28px;
+    background: var(--minke-bootstrap-panel-bg);
+    box-shadow: 0 24px 70px rgb(15 23 42 / 24%);
+    backdrop-filter: blur(18px) saturate(120%);
+    -webkit-backdrop-filter: blur(18px) saturate(120%);
+  }
+
   .minke-bootstrap__status {
     color: var(--minke-bootstrap-status-color);
   }
