@@ -14,7 +14,7 @@
         "skin.css"
       ],
       "js": [
-        "early.js"
+        "skin.js"
       ],
       "run_at": "document_start"
     }
