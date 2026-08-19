@@ -5,13 +5,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.client.json --noEmit && node ../../vendor/deepseek-harness/node_modules/typescript/bin/tsc -b tsconfig.host.json --pretty false"
+    "typecheck": "tsc -p tsconfig.client.json --noEmit && node ../../vendor/deepseek-harness/node_modules/typescript/bin/tsc -b tsconfig.host.json --pretty false && node ../../vendor/deepseek-harness/node_modules/typescript/bin/tsc -b tsconfig.fork.json --pretty false"
   },
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
     "./web-search": "./lib/web-search.js",
+    "./fork": "./lib/fork.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },

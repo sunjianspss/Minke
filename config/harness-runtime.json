@@ -33,6 +33,9 @@
         "packagePath": "packages/model-runtime"
       }
     ],
-    "runtimePackages": []
+    "runtimePackages": [
+      "@deepseek-ai/dsh-mcp-client",
+      "@deepseek-ai/dsh-subagent-claude-code"
+    ]
   }
 }

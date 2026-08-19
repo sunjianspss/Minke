@@ -37,6 +37,7 @@
     "test:desktop:sidebar:prepared": "node scripts/tests/agent-browser-conversation.mjs --sidebar",
     "test:desktop:runtime": "pnpm run build:preload && electron tests/macos-window-runtime.cjs",
     "test:desktop:harness-navigation": "electron tests/harness-navigation-runtime.cjs",
+    "test:fork": "node --test tests/minke-fork.test.mjs tests/minke-skin.test.mjs",
     "test:sys": "node --test tests/sys-native-module.test.mjs",
     "harness:verify": "node scripts/harness/verify.mjs",
     "harness:stage": "node scripts/harness/stage.mjs",

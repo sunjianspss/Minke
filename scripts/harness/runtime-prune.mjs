@@ -34,6 +34,17 @@ const PNPM_FASTLIST_WINDOWS_EXECUTABLE =
   /^node_modules\/pnpm\/dist\/vendor\/fastlist-[^/]+\.exe$/u;
 const PNPM_REFLINK_PLATFORM_PACKAGE =
   /^(node_modules\/pnpm\/dist\/node_modules\/@reflink\/(reflink-[^/]+))(?:\/|$)/u;
+// >>> minke-fork
+// @anthropic-ai/claude-agent-sdk 把整个 Claude Code CLI 的预编译二进制作为
+// optionalDependency 发布，单个平台包 245 MiB。dsh-subagent-claude-code 永远走
+// ctx.subprocess.resolveExecutable("claude") 从 PATH 解析用户自己装的 CLI，
+// 再作为 pathToClaudeCodeExecutable 传给 SDK，所以这份随包二进制从不被执行。
+// SDK 的入口文件里也没有引用这个包名。
+// 不动 RUNTIME_PRUNE_POLICY_VERSION：这个文件本身就在 runtimeFingerprintPaths 里，
+// 改它已经会让 coreFingerprint 失效并强制重新 stage。
+const CLAUDE_AGENT_SDK_NATIVE_PACKAGE =
+  /^(node_modules\/@anthropic-ai\/claude-agent-sdk-[a-z0-9]+-[a-z0-9-]+)(?:\/|$)/u;
+// <<< minke-fork
 const ESBUILD_LAUNCHER_PATH = "node_modules/esbuild/bin/esbuild";
 const ESBUILD_NATIVE_BINARY_MIN_BYTES = 64 * 1024;
 
@@ -88,6 +99,17 @@ function prunableRuntimeDirectory(path, target = {}) {
       }
     }
   }
+
+  // >>> minke-fork
+  const claudeAgentSdkMatch =
+    CLAUDE_AGENT_SDK_NATIVE_PACKAGE.exec(normalizedPath);
+  if (claudeAgentSdkMatch !== null) {
+    return {
+      category: "duplicateTooling",
+      path: claudeAgentSdkMatch[1],
+    };
+  }
+  // <<< minke-fork
 
   const reflinkMatch = PNPM_REFLINK_PLATFORM_PACKAGE.exec(normalizedPath);
   if (

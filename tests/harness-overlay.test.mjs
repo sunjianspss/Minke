@@ -418,7 +418,15 @@ test("product capability packages follow the shared naming convention", () => {
       },
     ],
   );
-  assert.deepEqual(contract.productBundle.runtimePackages, []);
+  // >>> minke-fork: 上游这里是 deepEqual(..., [])——它自己不再内置组合任何
+  // harness runtime 包（codex subagent 在 v0.2.0 改成让用户 `dsh plugin add`）。
+  // fork 仍然内置组合两个，所以这份清单归 fork 所有，锁死在这里；上游哪天重新
+  // 往 runtimePackages 里加东西，这一行会直接冲突，正好是要的信号。
+  assert.deepEqual(contract.productBundle.runtimePackages, [
+    "@deepseek-ai/dsh-mcp-client",
+    "@deepseek-ai/dsh-subagent-claude-code",
+  ]);
+  // <<< minke-fork
   assert.match(
     manifest.devDependencies?.["@lucide/icons"] ?? "",
     /^\d+\.\d+\.\d+$/u,
@@ -440,14 +448,21 @@ test("product capability packages follow the shared naming convention", () => {
 });
 
 test("the product overlay leaves product subagents on demand and composes the model runtime", () => {
+  // >>> minke-fork: 上游这两条断言原本作用于整份 patch——它 v0.2.0 起不再内置
+  // 组合任何 subagent，改成让用户 `dsh plugin --profile web add`。fork 故意反着
+  // 来，在自己的围栏里内置组合了 claude-code 那组（理由见 cordis.patch.yml 与
+  // FORK.md）。所以把作用域缩到围栏之外：上游那半边的不变量原样保住，围栏内的
+  // 精确内容交给 tests/minke-fork.test.mjs 拥有。
+  const upstreamPatch = patch.slice(0, patch.indexOf("# >>> minke-fork"));
   assert.doesNotMatch(
-    patch,
+    upstreamPatch,
     /@deepseek-ai\/dsh-subagent-(?:codex|claude-code)/u,
   );
   assert.doesNotMatch(
-    patch,
+    upstreamPatch,
     /toolName: subagent_(?:codex|claude_code)/u,
   );
+  // <<< minke-fork
   assert.match(
     patch,
     /id: llm-pi-ai[\s\S]*disabled: true/u,

@@ -44,3 +44,44 @@
 
 - id: ui-schedule
   disabled: false
+
+# >>> minke-fork
+# Fork 自有的组合块，一律追加在文件末尾：上游在中间新增行时 3-way merge 不冲突。
+# 约定见仓库根的 FORK.md。
+- insert:
+    # Claude Code subagent：上游 harness 自带但 Minke 没组合。一个 provider +
+    # 一个 tool-subagent 实例。登录、模型、沙箱全部由本机 claude CLI 自己拥有，
+    # 这里既不装 CLI 也不碰它的配置。
+    # 注意：上游 v0.2.0 把原来同构的 codex 那组从这里删掉了，改成让用户自己
+    # `dsh plugin --profile web add @deepseek-ai/dsh-subagent-codex` 装。
+    # fork 这里保持内置组合，因为 mcp-client 的实例要在运行时动态挂载，
+    # 走不了 plugin add 那条路；两者共用 productBundle.runtimePackages 机制。
+    - id: subagent-claude-code
+      name: '@deepseek-ai/dsh-subagent-claude-code'
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: true
+        backgroundMode: one-shot
+        maxDepth: provider-managed
+
+    # MCP 客户端。真正的实例由下面的 minke-fork 在运行时按
+    # $DSH_HOME/minke-mcp.json 逐条挂载，一个 server 一个实例。
+    # 这一行是禁用的模板行：它让 mcp-client 保持被组合层显式声明，
+    # 从而留在 runtime closure 里（contract 校验 runtimePackages 必须在此出现）。
+    - id: mcp-client-template
+      name: '@deepseek-ai/dsh-mcp-client'
+      disabled: true
+      config:
+        serverName: template
+        transport: stdio
+        command: 'true'
+
+    # Fork 唯一的 host 插件入口。以后加 fork 功能只改
+    # packages/harness-overlay/src/fork/**，这里不再增行。
+    - id: minke-fork
+      name: '@lencx/minke-harness-overlay/fork'
+# <<< minke-fork
