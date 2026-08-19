@@ -4,26 +4,6 @@ body,
   background-color: transparent !important;
 }
 
-body {
-  background-color: #d9e1e5 !important;
-  background-image:
-    linear-gradient(#f8fafc6b, #f8fafc6b),
-    var(--minke-background-image, none) !important;
-  background-position: center, center 76% !important;
-  background-repeat: no-repeat !important;
-  background-size: cover !important;
-  background-attachment: fixed !important;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: #0b1220 !important;
-    background-image:
-      linear-gradient(#02061785, #02061785),
-      var(--minke-background-image, none) !important;
-  }
-}
-
 #root > *,
 #root :has(> [data-shell-overlay]),
 #root :has(> [data-shell-overlay]) > :first-child,

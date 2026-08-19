@@ -10,7 +10,8 @@
         "http://localhost/*"
       ],
       "css": [
-        "early.css"
+        "early.css",
+        "skin.css"
       ],
       "js": [
         "early.js"
