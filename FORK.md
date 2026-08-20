@@ -53,7 +53,12 @@
 **`vendor/deepseek-harness` 永远不改。** `tests/harness-source-boundary.test.mjs`
 会断言这个 submodule 是干净的；要改 harness 行为，走 L2/L3，不走 patch。
 
-## 3. 守卫测试
+## 3. 如何验证
+
+四层，从快到慢。关键是知道**每层能抓到什么、抓不到什么**——MCP 那个 shim bug 就是
+前两层全绿、第三层才暴露的。
+
+### 第 1 层：静态 + 构建期（秒级）
 
 ```bash
 pnpm test:fork      # fork 自己的缝，必须绿
@@ -64,6 +69,73 @@ pnpm harness:verify # 组合层与 runtime closure 的契约
 `tests/minke-fork.test.mjs` 和 `tests/minke-skin.test.mjs` 是 fork 独有的，刻意不混进
 上游测试文件。它们锁住了每一处缝：围栏在不在、入口有没有被挤掉、依赖的上游包还在不在。
 **上游一改缝，这两个文件立刻红，而不是等打包或运行时才炸。**
+
+抓不到：任何和真实进程、环境变量、子进程有关的事。
+
+### 第 2 层：staged runtime（分钟级）
+
+```bash
+pnpm harness:stage
+ls runtime/host/node_modules/@deepseek-ai/ | grep <你的包>
+grep -c "minke-fork" runtime/host/node_modules/@lencx/minke-harness-overlay/cordis.patch.yml
+```
+
+抓得到：包没进 runtime closure、体积预算超标、patch 没被正确 staged。
+Claude Code 那 245 MiB 的平台二进制就是被这层拦下来的。
+
+### 第 3 层：隔离 harness —— 性价比最高，别跳过
+
+**Minke 会吞掉 harness 的 stdout**：`desktop/main/harness-runtime.ts` 把子进程输出捕获进
+缓冲区，只在**非预期退出**时才吐出来。正常运行时你在终端什么都看不到，`ctx.logger` 的
+输出也看不到。这是调试 fork 插件最大的坑。
+
+绕过办法是用隔离的 `DSH_HOME` 单独把 harness 跑起来，日志直接进终端，且不碰
+`~/.minke` 里的真实会话：
+
+```bash
+R=$PWD/runtime/host
+H=/tmp/dsh-test-home
+E=$PWD/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron
+mkdir -p "$H" && cp ~/.minke/harness/minke-mcp.json "$H/" 2>/dev/null
+
+ELECTRON_RUN_AS_NODE=1 DSH_HOME="$H" DSH_ELECTRON_EXECUTABLE="$E" \
+DSH_PNPM_ENTRY="$R/node_modules/pnpm/bin/pnpm.cjs" PATH="$R/bin:$PATH" \
+"$E" --expose-internals "$R/index.mjs" web \
+  --patch "$R/node_modules/@lencx/minke-harness-overlay/cordis.patch.yml" \
+  --host 127.0.0.1 --port 0
+```
+
+参数取自 `desktop/main/harness-launch.ts` 的 `harnessWebArguments()`，环境取自
+`harness-runtime.ts` 的 `harnessRuntimeEnvironment()`；那两个函数改了，这段也要跟着改。
+
+抓得到：插件加载失败、子进程起不来、环境变量问题。而且能做干净的 A/B——改一个变量
+再跑一次，因果立刻清楚。
+
+### 第 4 层：真实 app
+
+```bash
+pnpm start   # 必须在有 TTY 的终端里跑，electron-forge start 是交互式的
+```
+
+三个观察点，可信度递增：
+
+1. **插件清单**：设置 → 插件 → 插件列表，拉到底找你的插件
+2. **进程树**：`ps -ax -o pid,ppid,command | grep <你的子进程>`
+3. **问 agent**：「你可用的工具里有没有 xxx」
+
+第三点不能省。**插件「已启用」不等于模型能看到它的工具**——preset 的工具过滤在最后一步
+还能把它挡掉。`subagent_claude_code` 就是靠问 agent 才敢下结论的（结果是能看到：preset
+自带的同名行是禁用的，我们 host 层 insert 的那行生效）。
+
+### 加新功能时的最小流程
+
+1. 写代码 → `pnpm test:fork`
+2. `pnpm harness:stage` 看体积和闭包
+3. **第 3 层跑一次读日志**
+4. `pnpm start` 问一句 agent 确认工具可见
+
+打包验证（`pnpm package` / `pnpm make:macos`）只在改动可能影响产物结构时才需要；
+它会再跑一遍完整 stage，并报出 Host 与 app 的最终体积。
 
 ## 4. 同步上游的流程
 
