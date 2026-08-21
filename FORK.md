@@ -198,9 +198,22 @@ server 的 env（用户显式写的 env 优先）。这条被 `pnpm test:fork` �
 已用对照实验确认是 MCP 引入的，不是上游行为：清空 `recent-apps` 后，不带
 `minke-mcp.json` 启动记录保持为空（harness 子进程照跑），带上就出现。
 
-不修，因为两个方案都有代价：把 `command` 写成系统 node 的绝对路径能绕开 shim，但要求用户
-机器上装了 node，失去用 app 自带 runtime 的好处；关掉 Dock 最近应用区
-（`defaults write com.apple.dock show-recents -bool false`）则影响用户的全局设置。
+不修。三个规避方案各有代价，留给使用者按需选：
+
+- **配非 node 实现的 server**（Go/Rust 之类的独立二进制）——根本不走 shim，副作用自然
+  不存在。成本最低，但取决于你要接的 server 有没有这种实现。
+- **把 `command` 写成系统 node/npx 的绝对路径**——绕开 PATH 上的 shim，但要求机器上装了
+  node，失去用 app 自带 runtime 的好处。
+- **关掉 Dock 最近应用区**（`defaults write com.apple.dock show-recents -bool false`）
+  ——一劳永逸，但改的是用户全局设置。
+
+**默认姿态：代码常驻，功能休眠。** 仓库不带 `minke-mcp.json`，所以开箱状态下不挂载任何
+server、不产生子进程、也就没有上面那个 Dock 条目；要用的时候建配置文件重启即可。
+休眠的成本只是启动时一次 ENOENT 的 `readFile`。
+
+顺带记一个容易误判的点：**删掉 MCP 代码并不会让 runtime 变小**。`dsh-mcp-client` 在 fork
+介入之前就作为传递依赖躺在 runtime closure 里了，我们只是把它显式声明进 `runtimePackages`。
+所以"删了能瘦身"这个理由不成立，删它的唯一收益是少一块要维护的代码。
 
 配置改完**需要重启 Minke**
 （暂不 watch）。配置文件不存在是正常状态；坏条目只会被跳过并打 warn，不会拖垮启动。
