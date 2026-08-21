@@ -185,6 +185,23 @@ pnpm test:fork && pnpm harness:verify
 server 的 env（用户显式写的 env 优先）。这条被 `pnpm test:fork` 锁住了——真机上验证过，
 不补就起不来，补上就正常。
 
+**已知副作用：Dock 里会多一个没有图标的 Minke 条目**。stdio server 走
+`npx` → bin 脚本的 `#!/usr/bin/env node` → PATH 上的 `runtime/host/bin/node` shim →
+`exec .../Minke.app/Contents/MacOS/Minke`。因为是从普通 shell 环境 exec bundle 内的
+可执行文件（而不是像 harness 子进程那样由 Electron 主进程直接 spawn），macOS 会给它记一条
+「最近使用的应用」，拿不到 bundle 图标，显示成通用 exec 图标。
+
+它是无害的：不是第二个实例，不占额外内存，退出 Minke 就消失，不留持久垃圾。但右键只给
+「强制退出」不给「从 Dock 中移除」——因为进程确实在跑；强制退出后 mcp-client 会重连把它
+拉回来，所以看起来「杀不掉」。
+
+已用对照实验确认是 MCP 引入的，不是上游行为：清空 `recent-apps` 后，不带
+`minke-mcp.json` 启动记录保持为空（harness 子进程照跑），带上就出现。
+
+不修，因为两个方案都有代价：把 `command` 写成系统 node 的绝对路径能绕开 shim，但要求用户
+机器上装了 node，失去用 app 自带 runtime 的好处；关掉 Dock 最近应用区
+（`defaults write com.apple.dock show-recents -bool false`）则影响用户的全局设置。
+
 配置改完**需要重启 Minke**
 （暂不 watch）。配置文件不存在是正常状态；坏条目只会被跳过并打 warn，不会拖垮启动。
 
