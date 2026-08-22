@@ -12,11 +12,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { dshHomePath } from "@deepseek-ai/dsh-home-paths";
 import * as McpClient from "@deepseek-ai/dsh-mcp-client";
 import { readFile } from "node:fs/promises";
-import {
-  forwardedStdioEnv,
-  MCP_CONFIG_FILE,
-  resolveMcpServers,
-} from "./mcp-config";
+import { MCP_CONFIG_FILE, resolveMcpServers } from "./mcp-config";
 
 export async function applyMcpServers(ctx: Context): Promise<void> {
   const configPath = dshHomePath(MCP_CONFIG_FILE);
@@ -39,10 +35,7 @@ export async function applyMcpServers(ctx: Context): Promise<void> {
     return;
   }
 
-  const { mounted, skipped } = resolveMcpServers(
-    parsed,
-    forwardedStdioEnv(process.env),
-  );
+  const { mounted, skipped } = resolveMcpServers(parsed);
   let live = 0;
   for (const resolution of mounted) {
     if (!resolution.ok) {

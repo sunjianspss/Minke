@@ -26,16 +26,6 @@ export interface McpServersFile {
   servers?: McpServerEntry[];
 }
 
-/**
- * 挂载 stdio server 时必须补进子进程环境的变量。
- *
- * Minke 把 runtime/host/bin 放在 PATH 最前面，那里的 `node` 是个 shim：
- *   : "${DSH_ELECTRON_EXECUTABLE:?...}"; exec env ELECTRON_RUN_AS_NODE=1 "$DSH_ELECTRON_EXECUTABLE" "$@"
- * 而 harness 的 subprocess 服务给子进程的是清洗过的环境，不带 DSH_ELECTRON_EXECUTABLE。
- * 于是任何走 node/npx 的 MCP server 一启动就死在 shim 上，然后按重连策略反复重试。
- * 这里把它补回去，用户不必知道这个 Minke 特有的细节。
- */
-export const FORWARDED_STDIO_ENV = ["DSH_ELECTRON_EXECUTABLE"] as const;
 
 /** 一条配置的解析结果：要么是可挂载的 mcp-client 配置，要么是拒绝原因。 */
 export type McpServerResolution =
@@ -63,7 +53,6 @@ function stringDict(
 export function resolveMcpServer(
   entry: unknown,
   seen: ReadonlySet<string>,
-  inheritedEnv: Record<string, string> = {},
 ): McpServerResolution {
   if (!isRecord(entry)) {
     return { ok: false, name: "<unnamed>", reason: "条目不是对象" };
@@ -99,9 +88,8 @@ export function resolveMcpServer(
         (argument): argument is string => typeof argument === "string",
       );
     }
-    // 用户显式写的 env 优先，补进来的只是兜底。
-    const env = { ...inheritedEnv, ...(stringDict(entry.env) ?? {}) };
-    if (Object.keys(env).length > 0) config.env = env;
+    const env = stringDict(entry.env);
+    if (env !== undefined) config.env = env;
     if (typeof entry.cwd === "string" && entry.cwd !== "") {
       config.cwd = entry.cwd;
     }
@@ -120,7 +108,6 @@ export function resolveMcpServer(
 /** 展开整份配置文件，保留顺序，跳过 enabled: false 的条目。 */
 export function resolveMcpServers(
   source: unknown,
-  inheritedEnv: Record<string, string> = {},
 ): { mounted: McpServerResolution[]; skipped: number } {
   if (!isRecord(source) || !Array.isArray(source.servers)) {
     return { mounted: [], skipped: 0 };
@@ -133,22 +120,10 @@ export function resolveMcpServers(
       skipped += 1;
       continue;
     }
-    const resolution = resolveMcpServer(entry, seen, inheritedEnv);
+    const resolution = resolveMcpServer(entry, seen);
     if (resolution.ok) seen.add(resolution.name);
     mounted.push(resolution);
   }
   return { mounted, skipped };
 }
 
-
-/** 从当前进程环境里挑出要转发给 stdio 子进程的变量。 */
-export function forwardedStdioEnv(
-  source: Record<string, string | undefined>,
-): Record<string, string> {
-  const forwarded: Record<string, string> = {};
-  for (const key of FORWARDED_STDIO_ENV) {
-    const value = source[key];
-    if (typeof value === "string" && value !== "") forwarded[key] = value;
-  }
-  return forwarded;
-}

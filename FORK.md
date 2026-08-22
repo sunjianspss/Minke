@@ -98,8 +98,8 @@ H=/tmp/dsh-test-home
 E=$PWD/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron
 mkdir -p "$H" && cp ~/.minke/harness/minke-mcp.json "$H/" 2>/dev/null
 
-ELECTRON_RUN_AS_NODE=1 DSH_HOME="$H" DSH_ELECTRON_EXECUTABLE="$E" \
-DSH_PNPM_ENTRY="$R/node_modules/pnpm/bin/pnpm.cjs" PATH="$R/bin:$PATH" \
+ELECTRON_RUN_AS_NODE=1 DSH_HOME="$H" MINKE_NODE_EXECUTABLE="$E" \
+MINKE_PNPM_ENTRY="$R/node_modules/pnpm/bin/pnpm.cjs" PATH="$R/bin:$PATH" \
 "$E" --expose-internals "$R/index.mjs" web \
   --patch "$R/node_modules/@lencx/minke-harness-overlay/cordis.patch.yml" \
   --host 127.0.0.1 --port 0
@@ -178,12 +178,16 @@ pnpm test:fork && pnpm harness:verify
 
 模型看到的工具名是 `mcp__files__read_file` 这种形式。
 
-**stdio server 的环境变量转发**：Minke 把 `runtime/host/bin` 放在 PATH 最前面，那里的
-`node` 是个 shim，缺 `DSH_ELECTRON_EXECUTABLE` 就直接退出；而 harness 给子进程的是清洗过
-的环境，不带这个变量。结果是任何走 `node`/`npx` 的 MCP server 一启动就死在 shim 上，然后
-按重连策略反复重试。`src/fork/mcp-config.ts` 的 `FORWARDED_STDIO_ENV` 会把它补进每个 stdio
-server 的 env（用户显式写的 env 优先）。这条被 `pnpm test:fork` 锁住了——真机上验证过，
-不补就起不来，补上就正常。
+**stdio server 的环境变量**：只来自用户自己在 `minke-mcp.json` 里写的 `env`，fork 不再
+往里塞任何东西。
+
+> 历史：v0.2.0 之前这里有一套 `FORWARDED_STDIO_ENV`。Minke 把 `runtime/host/bin` 放在
+> PATH 最前面，那里的 `node` 是个 shim，缺 `DSH_ELECTRON_EXECUTABLE` 就直接退出，而
+> harness 给子进程的是清洗过的环境，不带这个变量——任何走 `node`/`npx` 的 MCP server
+> 一启动就死在 shim 上。上游 v0.2.0 把这个变量改名成 `MINKE_NODE_EXECUTABLE`
+> （`config/embedded-node-runtime.mts`），并且**用 `MINKE_` 前缀让它主动活过环境清洗**，
+> 同时显式 `delete` 掉旧名。也就是说上游从设计上解决了这个问题，而 fork 那套补丁既没用了、
+> 转发的又是个已被删掉的变量名。整套已删除。
 
 **已知副作用：Dock 里会多一个没有图标的 Minke 条目**。stdio server 走
 `npx` → bin 脚本的 `#!/usr/bin/env node` → PATH 上的 `runtime/host/bin/node` shim →

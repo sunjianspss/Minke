@@ -23,7 +23,6 @@ const runtimePrune = read("scripts/harness/runtime-prune.mjs");
 const FENCE = /# >>> minke-fork\n([\s\S]*)# <<< minke-fork/u;
 
 const {
-  forwardedStdioEnv,
   MCP_CONFIG_FILE,
   resolveMcpServer,
   resolveMcpServers,
@@ -218,37 +217,25 @@ test("MCP entries translate into mcp-client configs", () => {
   });
 });
 
-test("stdio servers inherit the runtime env their node shim needs", () => {
-  // runtime/host/bin/node 是个 shim，缺 DSH_ELECTRON_EXECUTABLE 就直接退出；
-  // harness 给子进程的是清洗过的环境，不带这个变量。不补的话任何走 node/npx
-  // 的 MCP server 都起不来（实测：无限重连，PATH 上的 shim 每次都死）。
-  const inherited = forwardedStdioEnv({
-    DSH_ELECTRON_EXECUTABLE: "/path/to/Electron",
-    SECRET_TOKEN: "nope",
-  });
-  assert.deepEqual(inherited, {
-    DSH_ELECTRON_EXECUTABLE: "/path/to/Electron",
-  });
-  assert.deepEqual(forwardedStdioEnv({}), {}, "变量缺失时不该塞空值");
+test("stdio env comes only from the user's own config", () => {
+  // 这里以前有一套 FORWARDED_STDIO_ENV：把 DSH_ELECTRON_EXECUTABLE 补进每个
+  // stdio server，否则 PATH 上 runtime/host/bin/node 那个 shim 起不来。
+  // 上游 v0.2.0 把它改名成 MINKE_NODE_EXECUTABLE（config/embedded-node-runtime.mts），
+  // 并且用 MINKE_ 前缀让它主动活过 harness 的环境清洗，同时显式 delete 掉旧名。
+  // 也就是说那套补丁既没用了也补错了变量，已整个删掉——现在 env 只来自用户配置。
+  const stdio = resolveMcpServer({ name: "a", command: "npx" }, new Set());
+  assert.equal(stdio.config.env, undefined, "用户没写 env 就不该凭空塞一个");
 
-  const stdio = resolveMcpServer({ name: "a", command: "npx" }, new Set(), inherited);
-  assert.deepEqual(stdio.config.env, {
-    DSH_ELECTRON_EXECUTABLE: "/path/to/Electron",
-  });
-
-  // 用户显式写的 env 优先，补进来的只是兜底。
-  const overridden = resolveMcpServer(
-    { name: "b", command: "npx", env: { DSH_ELECTRON_EXECUTABLE: "/mine" } },
+  const withEnv = resolveMcpServer(
+    { name: "b", command: "npx", env: { TOKEN: "t" } },
     new Set(),
-    inherited,
   );
-  assert.deepEqual(overridden.config.env, { DSH_ELECTRON_EXECUTABLE: "/mine" });
+  assert.deepEqual(withEnv.config.env, { TOKEN: "t" });
 
   // http transport 没有子进程，不该被塞 env。
   const http = resolveMcpServer(
     { name: "c", transport: "streamable-http", url: "http://x/mcp" },
     new Set(),
-    inherited,
   );
   assert.equal(http.config.env, undefined);
 });
