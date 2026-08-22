@@ -5,6 +5,13 @@
 
 下面是达成这一点的全部约定。加任何新功能前先读完。
 
+> **先看全局**：[Minke 架构地图](https://claude.ai/code/artifact/5843c0ff-475f-4be0-9fd1-699adc932b39)
+> ——构建管线（submodule → `stage.mjs` → `runtime/host` → app）、运行时拓扑
+> （主进程 spawn harness 子进程，窗口 `loadURL` 到本地 HTTP）、client 层的
+> 15 个模块与它们挂载的 slot，以及下面这四条缝各自接在运行时的什么位置。
+> 链接是私有的 Claude artifact，只有仓库所有者能打开；本文件本身是自足的，
+> 打不开也不影响读。
+
 ## 1. 扩展缝：优先用靠上的那一层
 
 | 层 | 位置 | 改动上游文件 | 适合做什么 |
