@@ -102,7 +102,7 @@ ELECTRON_RUN_AS_NODE=1 DSH_HOME="$H" MINKE_NODE_EXECUTABLE="$E" \
 MINKE_PNPM_ENTRY="$R/node_modules/pnpm/bin/pnpm.cjs" PATH="$R/bin:$PATH" \
 "$E" --expose-internals "$R/index.mjs" web \
   --patch "$R/node_modules/@lencx/minke-harness-overlay/cordis.patch.yml" \
-  --host 127.0.0.1 --port 0
+  --no-open --host 127.0.0.1 --port 0
 ```
 
 参数取自 `desktop/main/harness-launch.ts` 的 `harnessWebArguments()`，环境取自
