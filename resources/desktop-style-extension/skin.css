@@ -84,6 +84,33 @@ body {
   background-attachment: fixed !important;
 }
 
+/*
+ * 让上游的布局面板透出 body 上的皮肤。
+ *
+ * early.css 只把 `#root > *` 打成透明。v0.2.0 起上游在每一列里又加了一层
+ * 自带不透明底的面板，early.css 够不到：
+ *
+ *   frame > sidebarCol > [data-slot="sidebar"]      > <面板 rgb(249,250,251)>
+ *         > centerCol  > [data-slot="conversation"] > <面板 rgb(255,255,255)>
+ *         > detailsCol > [data-slot="details"]      > <面板，默认折叠所以量不到>
+ *
+ * 面板本身的类名是 CSS Module 哈希（-TPGmq_root / r3IEgq_root），每次构建都变，
+ * 锁不住；但它们都是某个 data-slot 容器的直接子元素，而 data-slot 是上游稳定的
+ * 命名契约（early.css 自己就在用 [data-slot="conversation.session.header"]）。
+ * 所以锚 data-slot，取直接子元素，不猜层数。
+ *
+ * 只打这一层，不往里递归：面板内部的卡片、输入框、按钮该是什么底就是什么底。
+ * off 档直接不匹配（而不是事后 revert）：revert-layer 会一路退到 UA 样式，
+ * 退不回上游的作者样式，反而把面板也弄透明了。
+ */
+html:not([data-minke-skin="off"]) :is(
+  [data-slot="sidebar"],
+  [data-slot="conversation"],
+  [data-slot="details"]
+) > * {
+  background-color: transparent !important;
+}
+
 /* off：完全让位给上游，early.css 的透明背景重新生效。 */
 [data-minke-skin="off"] body {
   background-color: transparent !important;
