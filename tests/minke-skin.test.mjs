@@ -87,6 +87,34 @@ test("the skin hooks into upstream files with a single line each", () => {
   ]);
 });
 
+test("the skin punches through upstream's per-column panels", () => {
+  // v0.2.0 起上游在每一列里加了一层自带不透明底的面板，early.css 的
+  // `#root > *` 够不到，皮肤就整个被盖住——计算样式全对，渲染出来一片白。
+  // 只有跑起来截图才看得见，所以这里把「锚点必须稳定」这件事锁死。
+  const rule = extensionSkin.match(
+    /html:not\(\[data-minke-skin="off"\]\)[^{]*\{[^}]*\}/u,
+  );
+  assert.ok(rule, "面板透明规则不见了，皮肤会被上游面板整个盖住");
+  for (const slot of ["sidebar", "conversation", "details"]) {
+    assert.match(
+      rule[0],
+      new RegExp(`\\[data-slot="${slot}"\\]`, "u"),
+      `${slot} 这一列没被打透明`,
+    );
+  }
+  assert.match(rule[0], /background-color:\s*transparent\s*!important/u);
+  // off 档必须靠 :not() 排除，而不是事后 revert——revert-layer 会退到 UA 样式，
+  // 退不回上游的作者样式，面板会跟着一起透明。
+  assert.doesNotMatch(extensionSkin, /:\s*revert(-layer)?\s*!important/u);
+  // 面板自己的类名是 CSS Module 哈希（-TPGmq_root / r3IEgq_root 之类），
+  // 每次构建都变。锚到哈希类名上等于没锚。
+  assert.doesNotMatch(
+    extensionSkin,
+    /\.[A-Za-z-]*[a-z][A-Z0-9][A-Za-z0-9]{3,}_[a-z]/u,
+    "别拿 CSS Module 的哈希类名当选择器，构建一次就失效",
+  );
+});
+
 test("the stable Harness background resolves through the extension runtime", () => {
   const { declarations } = runSkinScript();
 
