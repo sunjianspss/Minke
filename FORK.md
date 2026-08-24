@@ -155,6 +155,47 @@ pnpm test:fork && pnpm harness:verify
 
 冲突只会落在带围栏的那几处。fork 改动尽量按主题分成独立 commit，rebase 时更好处理。
 
+**上游 bump 了 harness 版本时，上面这四行不够。** `runtime/host` 还是旧版本，
+`test:fork` 全是静态断言、`harness:verify` 也只查契约，三者都不会碰新 runtime，
+于是全绿但什么都没验证。按这个顺序补：
+
+```bash
+# fork 的 runtimePackages 在新版 harness 里是否还存在
+node -e 'import("./scripts/harness/contract.mjs")
+  .then(m => m.verifyHarnessContract(process.cwd()))
+  .then(() => console.log("contract OK"))
+  .catch(e => { console.error("contract FAILED:", e.message); process.exit(1) })'
+
+# fork 对 dsh-* 的调用签名是否还对得上（三个工程，含 src/fork）
+pnpm --filter @lencx/minke-harness-overlay typecheck
+
+# 重建 runtime/host，否则后面验的还是旧版本
+pnpm harness:stage
+```
+
+`contract.mjs` 要求每个 `productBundle.runtimePackages` 条目在 `cordis.patch.yml`
+里有对应的 `name: '<pkg>'`——`mcp-client-template` 那行 disabled 模板就是为它留的。
+真正的运行时验证走上面第 3 节的第 3 层（隔离 harness）。
+
+### 同步记录
+
+| 日期 | 上游 | harness | 结果 |
+|---|---|---|---|
+| 2026-08-24 | `bd23660 → 3c79629` | `0.1.0-rc.8 → 0.1.1-rc.1` | rebase 零冲突 |
+
+上游那次改了三块：Host RPC 换成 `MinkeHostRpcEndpoint` 泛型分发（未知 endpoint
+现在返回 `bad-request`）、`main.ts` 拆出 `harness-lifecycle.ts` 与
+`harness-permission-policy.ts`、新增 `scripts/harness/contract.mjs` 契约校验。
+删掉的 `profile-plugin-location.patch` 是上游自己的，fork 不依赖。
+
+两边只碰同一个文件 `config/harness-runtime.json`：上游改头部（commit / 版本 /
+patches），fork 改尾部（`runtimePackages`），不同 hunk，3-way 自动合。
+`cordis.patch.yml`、`skin.*`、`runtime-prune.mjs` 上游一行没动，`data-slot`
+也全部原样——**末尾追加**那条规则这次是真的省事了。
+
+验证：typecheck 三工程 `--force` 全量过、`test:fork` 20/20、5 档皮肤逐帧确认、
+fork 四行插件全部挂载、MCP 动态挂载握手跑通。
+
 ## 5. 现有 fork 功能
 
 ### MCP 客户端（L2 + L3）
