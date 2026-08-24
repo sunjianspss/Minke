@@ -44,3 +44,6 @@ docs/research
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code 本地个人配置
+.claude/settings.local.json
