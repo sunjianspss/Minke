@@ -25,6 +25,32 @@ FORK.md 第 3 节讲的是分层验证的思路和命令，那边是正的，先
 3. **Minke 吞掉 harness 的 stdout**（`desktop/main/harness-runtime.ts`
    只在非预期退出时才吐缓冲区）。`ctx.logger` 在真 app 里看不见。
 
+## 坑：一个会让你以为「坏了」的假象
+
+`pnpm test:desktop` 里这条**在 Homebrew 装的 node 上恒失败**，与改动无关：
+
+```
+tests/harness-runtime-prune.test.mjs
+✖ runtime pruning replaces esbuild's duplicate binary with a launcher
+  assert.ok(report.optimized.bytes > 100_000)
+```
+
+它拿 `process.execPath` 当假的 esbuild 二进制素材，断言剪掉后省下 >100 KB。
+而 Homebrew 的 `bin/node` 是个链到共享 `libnode` 的 stub，只有 ~68 KB
+（`wc -c "$(node -p process.execPath)"` 一看便知），素材本身就不够大。
+官方安装包或 nvm 装的 node 是几十 MB 的完整二进制，同一条测试就过。
+
+**判断任何一条测试是不是自己改坏的，成本最低的办法是拉个对照 worktree：**
+
+```sh
+git worktree add -f --detach /tmp/ctrl origin/main
+ln -s "$PWD/node_modules" /tmp/ctrl/node_modules      # 省一次 install
+cd /tmp/ctrl && node --test tests/<那个文件>.test.mjs
+git worktree remove --force /tmp/ctrl                  # 记得删软链再删 worktree
+```
+
+同样失败 → 环境或上游的问题，不是你的改动。
+
 ## 第 3 层：隔离 harness（fork 插件 / MCP / subagent）
 
 和 FORK.md 里那段一致，抄一份放这儿免得来回翻。注意环境变量是 `MINKE_` 前缀
@@ -97,3 +123,24 @@ SKIN_EXT=$PWD/resources/desktop-style-extension SKIN_URL=http://127.0.0.1:<port>
 上面任何一个不透明的 div 都会把它整个盖掉，而计算样式看起来完全正常。
 一定要 `capturePage()` 看真实的那一帧，或者从视口中心 `elementFromPoint`
 往上钻一遍，找 `backgroundColor` 不透明且尺寸接近视口的元素。
+
+**但 `capturePage()` 自己也会骗你：它可能返回上一次样式变更「之前」的帧。**
+同一时刻 `executeJavaScript` 读到的计算样式却是当前的，两者错开一位。
+后果很隐蔽：改一次样式截一张图，整批图会整体偏移一位——标着 A 的图里是
+上一档，最后一档根本没截到——而报告里的 attribute 和计算样式全部正确，
+光看数据完全看不出来。只有截图内容本身（或它的字节数）才会露馅。
+
+改完样式后这样收帧：
+
+```js
+await win.webContents.executeJavaScript(
+  `new Promise((r) => requestAnimationFrame(() =>
+     requestAnimationFrame(() => setTimeout(r, 250))))`);
+await win.capturePage();          // 丢掉可能陈旧的这一张
+await new Promise((r) => setTimeout(r, 350));
+const shot = await win.capturePage();   // 这张才作数
+```
+
+顺带：验证多档主题时**别依赖快捷键的循环顺序**去推当前是哪一档，
+直接逐档写 `localStorage` + `dataset.minkeSkin` 设定，再各自收帧。
+快捷键本身的循环行为用计算样式单独验一遍就够了。
