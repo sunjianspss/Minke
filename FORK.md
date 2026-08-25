@@ -50,12 +50,26 @@
 - `config/harness-runtime.json` — `runtimePackages` 追加
 - `scripts/harness/build-product-packages.mjs` — fork 的 esbuild entry
   （v0.2.0 前叫 `scripts/harness/build-overlay.mjs`）
+- `scripts/harness/runtime-prune.mjs` — 多剪一条：Claude Agent SDK 随包发布的
+  平台二进制（245 MiB，从不被执行）
 - `package.json` — `test:fork` 脚本
+- `config/source-assertion-baseline.json` — fork 两个测试文件的 source-text 断言配额
+  （见下面那条「断言棘轮」）
 - `tests/harness-overlay.test.mjs` — `runtimePackages` 的 deepEqual 换成 fork 自己的清单
   （上游 v0.2.0 起断言它是空的）
 - `tests/macos-window-css.test.mjs` — `content_scripts` 的 deepEqual 改成不变量断言
+- `tests/web-search.test.mjs` — 解析 hook 加上 `…overlay/fork` 子路径；host 层工具
+  清单的 deepEqual 从 `[]` 收窄成 `["subagent_claude_code"]`
 - `resources/desktop-style-extension/manifest.json` — 注入 `skin.css` / `skin.js`
 - `desktop/renderer/styles.css` — 一行 `@import "./skin.css"`
+- `.gitignore` — 忽略 `.claude/settings.local.json`
+
+**断言棘轮（v0.3.0 起）。** 上游加了 `tests/assertion-policy.test.mjs`：它扫全仓库
+对「读进来的源码文本」做的 `assert.match`，和 `config/source-assertion-baseline.json`
+**逐文件精确比对**——多了红，少了也红。fork 的两个测试文件本来就是靠读上游源码来锁缝的，
+天然全是这种断言，所以必须在 baseline 里登记。**以后给 `tests/minke-*.test.mjs` 增删
+一条 `assert.match`，同一次改动里就要改 baseline 的数字**，否则 `pnpm test:desktop` 红。
+当前配额：`minke-fork` 13 条、`minke-skin` 12 条。
 
 **`vendor/deepseek-harness` 永远不改。** `tests/harness-source-boundary.test.mjs`
 会断言这个 submodule 是干净的；要改 harness 行为，走 L2/L3，不走 patch。
@@ -182,6 +196,7 @@ pnpm harness:stage
 | 日期 | 上游 | harness | 结果 |
 |---|---|---|---|
 | 2026-08-24 | `bd23660 → 3c79629` | `0.1.0-rc.8 → 0.1.1-rc.1` | rebase 零冲突 |
+| 2026-08-25 | `3c79629 → 104249b`（v0.3.0，73 个提交） | `0.1.1-rc.1 → 0.1.1-rc.2` | 1 处冲突 + 2 处新缝 |
 
 上游那次改了三块：Host RPC 换成 `MinkeHostRpcEndpoint` 泛型分发（未知 endpoint
 现在返回 `bad-request`）、`main.ts` 拆出 `harness-lifecycle.ts` 与
@@ -195,6 +210,36 @@ patches），fork 改尾部（`runtimePackages`），不同 hunk，3-way 自动�
 
 验证：typecheck 三工程 `--force` 全量过、`test:fork` 20/20、5 档皮肤逐帧确认、
 fork 四行插件全部挂载、MCP 动态挂载握手跑通。
+
+#### 2026-08-25：v0.3.0
+
+上游这次很大（IM 网关 + Telegram/Discord、agent browser、web_search、跨平台更新、
+消息大纲导航），但和 fork 的缝几乎不重叠。rebase 14 个提交只冲突一处：
+`packages/harness-overlay/package.json` 的 `exports`——上游加了 `./web-search`，
+fork 加了 `./fork`，同一行位置。两条都留，fork 那条排在后面。
+
+真正要新做的是**两条新缝**，都是上游新增的机制第一次撞上 fork：
+
+1. **断言棘轮**（`tests/assertion-policy.test.mjs` + `config/source-assertion-baseline.json`）。
+   fork 的两个测试文件全是读源码文本的断言，不登记就红。细节见第 2 节末尾。
+2. **`tests/web-search.test.mjs` 会真的 boot 整棵插件树**——它把
+   `packages/harness-overlay/cordis.patch.yml` 原样喂给 `boot()`，于是连 fork 的
+   `minke-fork` 那行一起加载。两处要改：解析 hook 只短路了 `…overlay/web-search`
+   一个子路径，得补上 `…overlay/fork`（否则整棵树起不来）；host 层工具清单的
+   `assert.deepEqual(…, [])` 得收窄成 `["subagent_claude_code"]`（fork 在 host 层
+   组合了 `dsh-tool-subagent`）。
+
+   **顺带的好消息**：这条测试现在是 fork 唯一一条真跑起来的上游测试——
+   它等于在 CI 里替我们验了「fork 的 host 插件能在新版 harness 上加载、
+   `subagent_claude_code` 确实注册到 host 层」。以前这只能靠第 3 层手验。
+
+`cordis.patch.yml`、`skin.*`、`runtime-prune.mjs`、`manifest.json` 上游一行没动。
+皮肤依赖的 bootstrap 结构也没变——`data-slot` 那圈选择器原样生效。
+
+验证：contract OK、typecheck 三工程 `--force` 全量过、`test:fork` 20/20、
+`test:desktop` 283 条只剩 Homebrew node 那条恒失败的（见 `.claude/skills/verify`）、
+`harness:stage` 127.4 MiB/11947 文件（预算 150 MiB/15000）、隔离 harness 干净启动、
+MCP fixture 的 `initialize → tools/list` 握手跑通且子进程在、5 档皮肤逐帧确认。
 
 ## 5. 现有 fork 功能
 
