@@ -16,5 +16,7 @@
   "tests/pwa.test.mjs": 1,
   "tests/tabs.test.mjs": 108,
   "tests/terminal-settings.test.mjs": 12,
-  "tests/terminal-tabs.test.mjs": 12
+  "tests/terminal-tabs.test.mjs": 12,
+  "tests/minke-fork.test.mjs": 13,
+  "tests/minke-skin.test.mjs": 12
 }
