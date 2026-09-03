@@ -146,23 +146,11 @@ test("Electron keeps the native bootstrap off the persistent default Session", (
     `${macOSWindowSource}\n${desktopMainSource}`,
     /insertCSS|did-finish-load|MACOS_GLASS_CSS/,
   );
-  // >>> minke-fork
-  // 上游把 extensions.loadExtension 和 session.defaultSession 绑在同一条断言里，
-  // 因为它删掉扩展之后这两者只会一起出现。fork 把皮肤扩展加载回来了，但挂的是
-  // #surfaceSession，上游真正关心的不变量（启动不得初始化 Chromium 的持久化
-  // default Session）并没有被破坏。断言收窄成那条不变量本身，再补一条把
-  // loadExtension 钉死在 surface Session 上，防止哪天悄悄退回 defaultSession。
   assert.doesNotMatch(
     desktopMainSource,
-    /session\.defaultSession/,
+    /session\.defaultSession|extensions\.loadExtension/,
     "startup must not create Chromium's persistent default Session",
   );
-  assert.doesNotMatch(
-    desktopMainSource,
-    /(?<!this\.#surfaceSession\.)extensions\.loadExtension/,
-    "extensions may only load into the in-memory surface Session",
-  );
-  // <<< minke-fork
   assert.match(
     desktopMainSource,
     /session:\s*this\.#surfaceSession/,

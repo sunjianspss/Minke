@@ -18,9 +18,6 @@ const skinScript = read("resources/desktop-style-extension/skin.js");
 const manifest = JSON.parse(
   read("resources/desktop-style-extension/manifest.json"),
 );
-const mainWindowSource = read("desktop/main/main-window.ts");
-const applicationSource = read("desktop/main/application.ts");
-const forgeSource = read("forge.config.ts");
 
 /** 在隔离沙箱里跑一遍 skin.js，拿到它对页面做的全部动作。 */
 function runSkinScript({ stored } = {}) {
@@ -92,32 +89,6 @@ test("the private backgrounds never reach the public history", () => {
       `${file} 没被忽略，会跟着推进公开仓库`,
     );
   }
-});
-
-// 上游 v0.4.0（63861c2 + 7471219）把扩展这条注入路径整个拆了：主窗口搬到
-// #surfaceSession、loadExtension 删掉、manifest.json 删掉、打包条目摘掉。
-// fork 把它接了回来，这三处缝一断皮肤就静默失效——锁住，让它红在测试里。
-test("the extension delivery path the skin rides on stays wired", () => {
-  assert.match(
-    mainWindowSource,
-    /this\.#surfaceSession\.extensions\.loadExtension\(/,
-    "皮肤靠扩展注入，加载点没了皮肤就整个失效",
-  );
-  assert.match(
-    mainWindowSource,
-    /#macOSSurfaceBootstrapRoot\(\): string \{[\s\S]*?"desktop-style-extension"/,
-    "扩展根目录要同时覆盖打包态和开发态",
-  );
-  assert.match(
-    applicationSource,
-    /await windows\.installSurfaceBootstrap\(\);[\s\S]{0,200}?windows\.installPermissionPolicy\(\);/,
-    "扩展必须在第一份 Harness 文档之前装好，否则首帧会闪",
-  );
-  assert.match(
-    forgeSource,
-    /extraResource: \[[\s\S]*?"resources", "desktop-style-extension"/,
-    "打包漏了这个目录，装出来的 app 没皮肤",
-  );
 });
 
 test("the skin hooks into upstream files with a single line each", () => {

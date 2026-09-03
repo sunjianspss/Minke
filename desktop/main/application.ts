@@ -218,11 +218,6 @@ class DesktopApplication {
         this.#shortcutMenuBinding?.refreshBaseMenu(),
     });
     this.#windows = windows;
-    // >>> minke-fork
-    // 皮肤扩展必须在第一份 Harness 文档之前装好，否则 content_scripts 赶不上
-    // document_start，首帧会闪一下上游默认底色。见 main-window.ts 的同名围栏。
-    await windows.installSurfaceBootstrap();
-    // <<< minke-fork
     windows.installPermissionPolicy();
 
     const minkeConfig = new MinkeConfigStore(
