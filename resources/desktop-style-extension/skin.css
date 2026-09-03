@@ -8,13 +8,23 @@
  * 这样脚本执行前的第一帧就已经是最终样式，不会闪。
  */
 
+/*
+ * photo（默认档，不带属性时生效）。
+ *
+ * 三个图片档统一用 contain：竖图在横窗口里 cover 会按宽度撑满、高度溢出一倍多，
+ * 只剩一块大特写。contain 按高度缩，整张图完整露出来，两侧留白由
+ * --minke-skin-color 补上。图片不溢出，所以 position 只需要居中。
+ *
+ * paper / off 从这里继承 --minke-skin-size：它们没有图片，而纯渐变没有固有尺寸，
+ * contain 和 cover 都等于铺满整个区域，所以这个值对它们没有影响。
+ */
 :root {
   --minke-skin-color: #d9e1e5;
   --minke-skin-image:
     linear-gradient(#f8fafc6b, #f8fafc6b),
     var(--minke-background-image, none);
-  --minke-skin-position: center, center 76%;
-  --minke-skin-size: cover;
+  --minke-skin-position: center;
+  --minke-skin-size: contain;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,24 +36,20 @@
   }
 }
 
-/* aurora：纯渐变，不加载图片，最省资源的一档。 */
+/* aurora：户外照，冷调偏亮。取景和留白规则同 photo，只换图和底色。 */
 [data-minke-skin="aurora"] {
-  --minke-skin-color: #e8edf5;
+  --minke-skin-color: #dfe6ec;
   --minke-skin-image:
-    radial-gradient(60% 45% at 18% 12%, #a5c8ff9e, transparent),
-    radial-gradient(55% 40% at 82% 22%, #ffc3e29c, transparent),
-    radial-gradient(70% 55% at 50% 100%, #b8f2e69e, transparent);
-  --minke-skin-position: center;
-  --minke-skin-size: cover;
+    linear-gradient(#f8fafc6b, #f8fafc6b),
+    var(--minke-background-image-aurora, none);
 }
 
 @media (prefers-color-scheme: dark) {
   [data-minke-skin="aurora"] {
     --minke-skin-color: #070b18;
     --minke-skin-image:
-      radial-gradient(60% 45% at 18% 12%, #24407a8c, transparent),
-      radial-gradient(55% 40% at 82% 22%, #5a2a5c8c, transparent),
-      radial-gradient(70% 55% at 50% 100%, #14504a8c, transparent);
+      linear-gradient(#02061785, #02061785),
+      var(--minke-background-image-aurora, none);
   }
 }
 
@@ -51,7 +57,6 @@
 [data-minke-skin="paper"] {
   --minke-skin-color: #f4efe6;
   --minke-skin-image: linear-gradient(#fffdf8b8, #f0e8dab8);
-  --minke-skin-position: center;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -61,17 +66,20 @@
   }
 }
 
-/* mono：中性灰，接近上游默认观感但仍带一层底色。 */
+/* mono：室内照，暖调偏暗。同上，只换图和底色。 */
 [data-minke-skin="mono"] {
-  --minke-skin-color: #e7e9ec;
-  --minke-skin-image: linear-gradient(#ffffff80, #dfe3e880);
-  --minke-skin-position: center;
+  --minke-skin-color: #e7e4e0;
+  --minke-skin-image:
+    linear-gradient(#fbf9f66b, #fbf9f66b),
+    var(--minke-background-image-mono, none);
 }
 
 @media (prefers-color-scheme: dark) {
   [data-minke-skin="mono"] {
     --minke-skin-color: #121316;
-    --minke-skin-image: linear-gradient(#1c1e2280, #0e0f1280);
+    --minke-skin-image:
+      linear-gradient(#0e0c0a85, #0e0c0a85),
+      var(--minke-background-image-mono, none);
   }
 }
 

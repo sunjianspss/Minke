@@ -67,10 +67,18 @@
   }
 
   // 背景图必须走扩展 URL：相对路径会解析到 Harness 的 HTTP origin。
-  document.documentElement.style.setProperty(
-    "--minke-background-image",
-    `url("${chrome.runtime.getURL("minke-background.jpeg")}")`,
-  );
+  // 一个主题一张图，变量名和 skin.css 里的 var() 一一对应。
+  const BACKGROUNDS = {
+    "--minke-background-image": "minke-background.jpeg",
+    "--minke-background-image-aurora": "minke-background-aurora.jpeg",
+    "--minke-background-image-mono": "minke-background-mono.jpeg",
+  };
+  for (const [property, file] of Object.entries(BACKGROUNDS)) {
+    document.documentElement.style.setProperty(
+      property,
+      `url("${chrome.runtime.getURL(file)}")`,
+    );
+  }
   applySkin(readChoice());
 
   addEventListener("keydown", (event) => {

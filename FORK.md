@@ -345,6 +345,17 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 配色全在 `skin.css`，`skin.js` 只负责解析选择并写到 `<html data-minke-skin>`。
 没有属性时走 photo，所以脚本执行前的第一帧就已经是最终样式，不会闪。
 
+`photo` / `aurora` / `mono` 各配一张图（`minke-background{,-aurora,-mono}.jpeg`），
+`paper` 仍是纯渐变。图片必须走 `chrome.runtime.getURL()` 注入的
+`--minke-background-image*` 变量——相对路径会解析到 Harness 的 HTTP origin——并且
+每张都要在 `manifest.json` 的 `web_accessible_resources` 里放行。加图时三处一起改，
+`tests/minke-skin.test.mjs` 会把「变量、文件、manifest 条目」三者的一一对应锁住。
+
+图片档统一 `background-size: contain`，只在 `:root` 写一次，其余档继承。竖图在横窗口里
+`cover` 会按宽度撑满、高度溢出一倍多，只剩一块大特写；`contain` 按高度缩，整张图完整
+露出来，两侧留白由 `--minke-skin-color` 补。`desktop/renderer/skin.css` 管的启动窗口
+是另一条分发路径（图片被 Vite 哈希后打进 `app.asar`），得单独跟着改。
+
 皮肤用 `#root > main > div` 这类结构选择器代替往 `App.tsx` 加 className，换来上游文件
 零 diff；代价是上游改结构会静默失效，所以 `tests/minke-skin.test.mjs` 把依赖的结构
 锁住了。启动窗口暂时不跟随主题切换（那半边没有可用的 fork JS 钩子）。
