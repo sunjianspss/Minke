@@ -17,7 +17,7 @@
 | 层 | 位置 | 改动上游文件 | 适合做什么 |
 |---|---|---|---|
 | L0 运行时 | `~/.minke/harness/`（`DSH_HOME`） | 无 | skills、MCP server 列表、任何用户态配置 |
-| L1 注入层 | `resources/desktop-style-extension/` | 只有 `manifest.json` | 皮肤、页面级 CSS/JS |
+| L1 注入层 | `resources/minke-skin/` + `desktop/preload/minke-skin.ts` | preload 里两行 | 皮肤、页面级 CSS/JS |
 | L2 组合层 | `packages/harness-overlay/cordis.patch.yml` | 末尾追加块 | 打开 harness 里现成但没组合的插件 |
 | L3 自研层 | `packages/harness-overlay/src/fork/**` | 无（入口已经接好） | 自己写的 host 插件、工具、服务 |
 
@@ -57,18 +57,8 @@
   （见下面那条「断言棘轮」）
 - `tests/harness-overlay.test.mjs` — `runtimePackages` 的 deepEqual 换成 fork 自己的清单
   （上游 v0.2.0 起断言它是空的）
-- `tests/macos-window-css.test.mjs` — 上游那条「不得出现 `session.defaultSession`
-  **或** `extensions.loadExtension`」收窄成两条：禁 `defaultSession` 照旧，
-  `loadExtension` 改成只许挂在 `#surfaceSession` 上（v0.4.0 起，见下面「皮肤的
-  加载点」）
-- `resources/desktop-style-extension/manifest.json` — 注入 `skin.css` / `skin.js`。
-  **上游 v0.4.0 已经删掉了这个文件**，fork 整份留着
-- `desktop/main/main-window.ts` — 恢复 `installSurfaceBootstrap()` 与
-  `#macOSSurfaceBootstrapRoot()`（v0.4.0 起）
-- `desktop/main/application.ts` — 恢复 `await windows.installSurfaceBootstrap()`
-  的调用，排在 `installPermissionPolicy()` 之前（v0.4.0 起）
-- `forge.config.ts` — `extraResource` 补回 `resources/desktop-style-extension`
-  （v0.4.0 起）
+- `desktop/preload/desktop-preload.ts` — 两行：`import { installMinkeSkin }` 和
+  紧跟 `webFrame.insertCSS(macOSSurfaceCss)` 的那次调用（v0.4.0 起）
 - `desktop/renderer/styles.css` — 一行 `@import "./skin.css"`
 - `.gitignore` — 忽略 `.claude/settings.local.json`；忽略 aurora / mono 两档的私人配图
 
@@ -84,8 +74,12 @@
 **逐文件精确比对**——多了红，少了也红。fork 的两个测试文件本来就是靠读上游源码来锁缝的，
 天然全是这种断言，所以必须在 baseline 里登记。**以后给 `tests/minke-*.test.mjs` 增删
 一条 `assert.match`，同一次改动里就要改 baseline 的数字**，否则 `pnpm test:desktop` 红。
-当前配额：`minke-fork` 13 条、`minke-skin` 16 条。改上游测试文件同样要跟——
-v0.4.0 那次把 `macos-window-css` 的一条断言拆成两条，baseline 从 141 改成 142。
+当前配额：`minke-fork` 13 条、`minke-skin` 19 条。
+
+顺带一条经验：**能用行为断言就别用源码文本断言**。「skin.js 不再依赖 `chrome`」
+原本写成 `assert.doesNotMatch(skinScript, /chrome\.runtime\.getURL\(/)`，结果被
+注释里那句历史说明打红了。改成让沙箱里根本不提供 `chrome` 全局、脚本照样跑通——
+证明更强，还不占棘轮配额。
 
 **`vendor/deepseek-harness` 永远不改。** `tests/harness-source-boundary.test.mjs`
 会断言这个 submodule 是干净的；要改 harness 行为，走 L2/L3，不走 patch。
@@ -301,12 +295,39 @@ MCP fixture 的 `initialize → tools/list` 握手跑通且子进程在、5 档�
 于是 `skin.css` / `skin.js` 还在，但没有任何代码去加载它们——**这是一次静默失效，
 rebase 的冲突只报 `manifest.json`，硬解掉冲突皮肤照样是死的**。
 
-fork 的选择是把扩展加载恢复回来，但挂在上游新建的 `#surfaceSession` 上而不是
-`defaultSession`：上游真正关心的不变量（启动不得初始化 Chromium 的持久化 default
-Session）没有被破坏，凭据推迟访问那个修复也照样成立。代价是 fork 改的上游文件从
-2 个涨到 4 个（`main-window.ts`、`application.ts`、`forge.config.ts`、
-`tests/macos-window-css.test.mjs`），而且 `main-window.ts` 那两处是**中间插入**不是
-末尾追加——上游再重构 `MainWindowRuntime` 就要跟一次。
+**第一版的选择是错的，而且是死路，记在这里免得再走一遍。** 当时想的是把
+`loadExtension` 恢复回来、挂到上游新建的 `#surfaceSession` 上——静态断言、打包
+核对、asar 反查三层全绿，真 app 一启动就崩：
+
+```
+Error: Extensions cannot be loaded in a temporary session
+```
+
+`session.fromPartition("minke-main-window")` 没有 `persist:` 前缀，是**内存态
+session**，Electron 不允许往里加载扩展。而这个「内存态」恰恰就是上游那个修复本身
+（注释原话：`The in-memory desktop surface never initializes Chromium's Keychain`）。
+改成 `persist:` 能让扩展装上，但等于把上游修的 Keychain 提前初始化原样退回去。
+**没有折中余地，这条路结构上就不通。**
+
+最终方案是跟着上游走同一条路：皮肤改由 preload 注入。
+
+- CSS：`webFrame.insertCSS(skinCss)`，紧跟上游的 `early.css` 之后（排序决定覆盖）。
+- JS：`webFrame.executeJavaScript()` 送进页面的 **main world**。不能留在 preload
+  的 isolated world——`skin.js` 要读写 `localStorage["minke.skin"]`，而那一侧的
+  storage 未必是 Harness origin 的那一份。
+- 图片：**构建期内联成 `data:` URI**。没有 `chrome.runtime` 了，相对路径会解析到
+  Harness 的 HTTP origin（这正是当初改用扩展 URL 的原因），`file://` 又会被
+  Chromium 按跨协议拦掉，只有 `data:` 不依赖任何 origin。代价是 preload 从 ~50 KB
+  涨到 1.33 MB。
+- 用 `import.meta.glob(..., { eager: true, query: "?inline" })` 而不是三条静态
+  `import`：aurora / mono 是 `.gitignore` 掉的私人配图，clone 下来根本不存在，
+  静态 import 会让**构建直接失败**；glob 匹配不到就没有这一项，`var()` 自己回落到
+  `none`——缺图只该少一档，不该炸构建。
+
+顺带把 fork 的皮肤资产从 `resources/desktop-style-extension/` 挪到了
+`resources/minke-skin/`：扩展已经不存在，继续放在那个目录里是误导，而且挪走之后
+**上游那个目录恢复成和上游逐字一致**（只剩 `early.css`）。被改的上游文件也从
+一开始设想的 4 个减到 1 个（`desktop-preload.ts`，两行）。
 
 这三处新缝全部锁进了 `tests/minke-skin.test.mjs` 的
 `the extension delivery path the skin rides on stays wired`：加载点、根目录解析、
@@ -428,14 +449,15 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 
 ### 皮肤（L1）
 
-`resources/desktop-style-extension/` 在 Harness 页面上注入皮肤，
-`desktop/renderer/skin.css` 管 Electron 启动窗口。
+`resources/minke-skin/` 放素材（`skin.css` / `skin.js` / 三张图），
+`desktop/preload/minke-skin.ts` 负责注入，`desktop/renderer/skin.css` 管 Electron
+启动窗口。
 
-**加载点（v0.4.0 起由 fork 拥有）。** 上游已经不加载这个扩展了，是 fork 在
-`desktop/main/main-window.ts` 的 `installSurfaceBootstrap()` 里把它挂到
-`#surfaceSession` 上，由 `application.ts` 在 `installPermissionPolicy()` 之前调用，
-打包靠 `forge.config.ts` 的 `extraResource`。四处缺一皮肤就整个失效，而且是静默的
-——所以它们被 `tests/minke-skin.test.mjs` 锁住了。原委见第 4 节 v0.4.0 那条。
+**注入路径（v0.4.0 起）。** 上游 preload 里两行 fork 代码，紧跟它自己的
+`webFrame.insertCSS(macOSSurfaceCss)`：CSS 走 `insertCSS`，JS 走
+`executeJavaScript` 进页面 main world。**扩展那条路已经死了**——上游把主窗口搬到
+内存态 session，Electron 不允许往内存态 session 加载扩展。别再试，原委见第 4 节
+v0.4.0 那条。
 
 主题存在 `localStorage["minke.skin"]`，可选 `photo`（默认）、`aurora`、`paper`、
 `mono`、`off`、`auto`（按日期在四个视觉主题间轮换）。**Alt+Shift+K 依次切换。**
@@ -444,10 +466,15 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 没有属性时走 photo，所以脚本执行前的第一帧就已经是最终样式，不会闪。
 
 `photo` / `aurora` / `mono` 各配一张图（`minke-background{,-aurora,-mono}.jpeg`），
-`paper` 仍是纯渐变。图片必须走 `chrome.runtime.getURL()` 注入的
-`--minke-background-image*` 变量——相对路径会解析到 Harness 的 HTTP origin——并且
-每张都要在 `manifest.json` 的 `web_accessible_resources` 里放行。加图时三处一起改，
-`tests/minke-skin.test.mjs` 会把「变量、文件、manifest 条目」三者的一一对应锁住。
+`paper` 仍是纯渐变。图片在**构建期被内联成 `data:` URI**，由 `minke-skin.ts` 的
+`BACKGROUND_PROPERTIES` 映射到 `--minke-background-image*` 变量，`skin.js` 只负责
+把拿到的 URI 写进 `documentElement.style`——它自己不认识文件名。相对路径和
+`file://` 都不行（前者解析到 Harness 的 HTTP origin，后者被跨协议拦掉）。
+
+**加图要改两处**：把文件放进 `resources/minke-skin/`，并在 `minke-skin.ts` 的
+`BACKGROUND_PROPERTIES` 里加一行；glob 会自动把它内联进去。
+`tests/minke-skin.test.mjs` 把「变量、文件、映射」三者的一一对应锁住了。
+私人配图记得同时进 `.gitignore`。
 
 图片档统一 `background-size: contain`，只在 `:root` 写一次，其余档继承。竖图在横窗口里
 `cover` 会按宽度撑满、高度溢出一倍多，只剩一块大特写；`contain` 按高度缩，整张图完整

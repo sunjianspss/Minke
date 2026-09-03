@@ -13,11 +13,10 @@ const appSource = read("desktop/renderer/App.tsx");
 const indexHtml = read("desktop/renderer/index.html");
 const rendererStyles = read("desktop/renderer/styles.css");
 const rendererSkin = read("desktop/renderer/skin.css");
-const extensionSkin = read("resources/desktop-style-extension/skin.css");
-const skinScript = read("resources/desktop-style-extension/skin.js");
-const manifest = JSON.parse(
-  read("resources/desktop-style-extension/manifest.json"),
-);
+const extensionSkin = read("resources/minke-skin/skin.css");
+const skinScript = read("resources/minke-skin/skin.js");
+const skinPreload = read("desktop/preload/minke-skin.ts");
+const desktopPreload = read("desktop/preload/desktop-preload.ts");
 
 /** 在隔离沙箱里跑一遍 skin.js，拿到它对页面做的全部动作。 */
 function runSkinScript({ stored } = {}) {
@@ -33,11 +32,17 @@ function runSkinScript({ stored } = {}) {
       },
     },
   };
+  // 注入方（desktop/preload/minke-skin.ts）在 skin.js 之前写好这个全局，
+  // 值是构建期内联的 data: URI。这里用可辨认的假值，只验映射关系。
   const sandbox = {
-    chrome: {
-      runtime: {
-        getURL: (path) => `chrome-extension://minke/${path}`,
-      },
+    __minkeSkinBackgrounds: {
+      "--minke-background-image": "data:image/jpeg;base64,PHOTO",
+      "--minke-background-image-aurora": "data:image/jpeg;base64,AURORA",
+      "--minke-background-image-mono": "data:image/jpeg;base64,MONO",
+    },
+    MutationObserver: class {
+      observe() {}
+      disconnect() {}
     },
     document: {
       documentElement,
@@ -68,15 +73,15 @@ const LOCAL_BACKGROUNDS = [
 ];
 const BACKGROUND_FILES = [SHIPPED_BACKGROUND, ...LOCAL_BACKGROUNDS];
 
-test("the shipped background stays with the extension resources", () => {
+test("the shipped background stays where the preload globs it", () => {
   assert.ok(
     existsSync(
       new URL(
-        `../resources/desktop-style-extension/${SHIPPED_BACKGROUND}`,
+        `../resources/minke-skin/${SHIPPED_BACKGROUND}`,
         import.meta.url,
       ),
     ),
-    "forge 的 extraResource 整目录拷贝，图片必须留在这里",
+    "preload 的 import.meta.glob 从这里内联图片，挪走了默认档就没图",
   );
 });
 
@@ -85,7 +90,7 @@ test("the private backgrounds never reach the public history", () => {
   const gitignore = read(".gitignore");
   for (const file of LOCAL_BACKGROUNDS) {
     assert.ok(
-      gitignore.includes(`resources/desktop-style-extension/${file}`),
+      gitignore.includes(`resources/minke-skin/${file}`),
       `${file} 没被忽略，会跟着推进公开仓库`,
     );
   }
@@ -93,18 +98,38 @@ test("the private backgrounds never reach the public history", () => {
 
 test("the skin hooks into upstream files with a single line each", () => {
   assert.match(rendererStyles, /@import "\.\/skin\.css";/);
-  assert.deepEqual(
-    manifest.content_scripts[0].css,
-    ["early.css", "skin.css"],
-    "skin.css 必须排在 early.css 之后才能覆盖它的透明背景",
+  // 上游 preload 里只有两行 fork 代码：一个 import，一个调用。
+  assert.match(desktopPreload, /import \{ installMinkeSkin \} from "\.\/minke-skin\.ts";/u);
+  assert.match(
+    desktopPreload,
+    /webFrame\.insertCSS\(macOSSurfaceCss\);[\s\S]{0,200}?installMinkeSkin\(\);/u,
+    "皮肤必须排在 early.css 之后注入，否则覆盖不掉它的底色",
   );
-  assert.deepEqual(manifest.content_scripts[0].js, ["skin.js"]);
-  assert.deepEqual(manifest.web_accessible_resources, [
-    {
-      resources: BACKGROUND_FILES,
-      matches: ["http://127.0.0.1/*", "http://localhost/*"],
-    },
-  ]);
+});
+
+test("the skin rides the preload injection path, not the dead extension", () => {
+  // v0.4.0 上游把主窗口搬到内存态 session，Electron 不允许往内存态 session
+  // 加载扩展（Extensions cannot be loaded in a temporary session），所以
+  // content_scripts 那条路是结构上走不通的，不是"忘了接"。
+  assert.match(skinPreload, /webFrame\.insertCSS\(skinCss\)/u);
+  assert.match(
+    skinPreload,
+    /webFrame\.executeJavaScript\(/u,
+    "skin.js 要进页面的 main world，preload 的 isolated world 读不到对的 localStorage",
+  );
+  assert.match(
+    skinPreload,
+    /import\.meta\.glob<string>\(\s*"\.\.\/\.\.\/resources\/minke-skin\/minke-background\*\.jpeg",\s*\{ eager: true, query: "\?inline"/u,
+    "私人配图可能不存在，必须用 glob 而不是静态 import，否则 clone 下来构建就炸",
+  );
+  // skin.js 不再依赖 chrome 这件事，由 runSkinScript 的沙箱直接证明：
+  // 那里面**没有 chrome 这个全局**，脚本照样跑完并写出三个变量。行为断言比
+  // 在源码里 grep "getURL" 强——后者会被注释里的历史说明骗到。
+  assert.deepEqual(
+    Object.keys(runSkinScript().declarations).length,
+    3,
+    "没有 chrome 的环境里 skin.js 必须仍能写出全部背景变量",
+  );
 });
 
 test("the skin punches through upstream's per-column panels", () => {
@@ -135,41 +160,38 @@ test("the skin punches through upstream's per-column panels", () => {
   );
 });
 
-test("every Harness background resolves through the extension runtime", () => {
+test("every Harness background reaches the page as an inlined data URI", () => {
   const { declarations } = runSkinScript();
 
-  // 变量名 → 文件名的映射就是 skin.js 和 skin.css 之间的契约，两边都锁住。
+  // 变量名 → 图片的映射是 skin.js / skin.css / minke-skin.ts 三方的契约。
+  // skin.js 自己不认识文件名了，它只转发注入方给的 data: URI。
   assert.deepEqual(declarations, [
-    [
-      "--minke-background-image",
-      'url("chrome-extension://minke/minke-background.jpeg")',
-    ],
-    [
-      "--minke-background-image-aurora",
-      'url("chrome-extension://minke/minke-background-aurora.jpeg")',
-    ],
-    [
-      "--minke-background-image-mono",
-      'url("chrome-extension://minke/minke-background-mono.jpeg")',
-    ],
+    ["--minke-background-image", 'url("data:image/jpeg;base64,PHOTO")'],
+    ["--minke-background-image-aurora", 'url("data:image/jpeg;base64,AURORA")'],
+    ["--minke-background-image-mono", 'url("data:image/jpeg;base64,MONO")'],
   ]);
   for (const [property] of declarations) {
     assert.match(
       extensionSkin,
       new RegExp(`var\\(${property}(?:,\\s*none)?\\)`, "u"),
-      `${property} 声明了却没人用，图片白下载`,
+      `${property} 声明了却没人用，图片白内联进 preload`,
+    );
+    // 注入方那张表要盖住 skin.css 用到的每一个变量。
+    assert.match(
+      skinPreload,
+      new RegExp(`"${property}"`, "u"),
+      `${property} 在 minke-skin.ts 的 BACKGROUND_PROPERTIES 里没有对应文件`,
     );
   }
   assert.doesNotMatch(
     extensionSkin,
-    /url\(["']?\.\/minke-background/,
-    "相对 URL 会解析到 Harness 的 HTTP origin，必须走扩展 URL",
+    /url\(["']?\.?\.?\/?minke-background/u,
+    "相对 URL 会解析到 Harness 的 HTTP origin，图片只能由 skin.js 写 data: URI",
   );
-  // 每张图只归一个主题，manifest 里放行的文件和运行时用到的必须一一对应。
-  assert.deepEqual(
-    declarations.map(([, value]) => value.match(/([^/"]+\.jpeg)/u)[1]),
-    BACKGROUND_FILES,
-  );
+  // 三个变量、三个文件名，minke-skin.ts 里必须一一对得上。
+  for (const file of BACKGROUND_FILES) {
+    assert.match(skinPreload, new RegExp(`"${file}"`, "u"), `${file} 没被映射`);
+  }
 });
 
 test("every skin choice reaches the stylesheet that defines it", () => {

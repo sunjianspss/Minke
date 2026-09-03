@@ -5,6 +5,9 @@ import {
 } from "electron";
 import appManifest from "../../package.json";
 import macOSSurfaceCss from "../../resources/desktop-style-extension/early.css?raw";
+// >>> minke-fork
+import { installMinkeSkin } from "./minke-skin.ts";
+// <<< minke-fork
 import {
   PLUGIN_INSTALLED_READ_CHANNEL,
   PLUGIN_INSTALL_CHANNEL,
@@ -231,6 +234,10 @@ let nextFileWatchId = 0;
 
 if (process.platform === "darwin") {
   webFrame.insertCSS(macOSSurfaceCss);
+  // >>> minke-fork
+  // 紧跟 early.css：同一条注入路径，皮肤排在后面才能覆盖它的底色。
+  installMinkeSkin();
+  // <<< minke-fork
 }
 
 function currentColorScheme(): WindowColorScheme | undefined {

@@ -28,7 +28,7 @@ body {
       var(--minke-background-scrim),
       var(--minke-background-scrim)
     ),
-    url("../../resources/desktop-style-extension/minke-background.jpeg");
+    url("../../resources/minke-skin/minke-background.jpeg");
   /* 和 Harness 那边的皮肤保持一致：竖图用 contain 完整显示，两侧留白由
      --minke-background-color 补上。图片不溢出，所以 position 只需要居中。 */
   background-position: center;
