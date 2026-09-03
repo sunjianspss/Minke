@@ -52,7 +52,7 @@
   （v0.2.0 前叫 `scripts/harness/build-overlay.mjs`）
 - `scripts/harness/runtime-prune.mjs` — 多剪一条：Claude Agent SDK 随包发布的
   平台二进制（245 MiB，从不被执行）
-- `package.json` — `test:fork` 脚本
+- `package.json` — `test:fork` / `test:fork:boot` 脚本
 - `config/source-assertion-baseline.json` — fork 两个测试文件的 source-text 断言配额
   （见下面那条「断言棘轮」）
 - `tests/harness-overlay.test.mjs` — `runtimePackages` 的 deepEqual 换成 fork 自己的清单
@@ -74,8 +74,10 @@
 
 `tests/web-search.test.mjs` 不再是被改的上游文件：上游 v0.4.0 把它从「boot 整棵
 插件树」改回了纯单元测试，fork 那两处补丁没有了作用对象，同步时整个提交被 skip。
-**代价是 fork 在 CI 里唯一一条真跑起来的上游测试没了**——「fork 的 host 插件能在
-新版 harness 上加载」重新只能靠第 3 层手验。
+那份覆盖已经由 fork 自己的 `tests/minke-fork-boot.test.mjs` 接管（第 3 节第 1.5 层），
+**不再寄生在上游测试上**——上游怎么改自己的测试都不会再把它带走。
+
+`package.json` 的 fork 脚本现在有两条：`test:fork` 和 `test:fork:boot`。
 
 **断言棘轮（v0.3.0 起）。** 上游加了 `tests/assertion-policy.test.mjs`：它扫全仓库
 对「读进来的源码文本」做的 `assert.match`，和 `config/source-assertion-baseline.json`
@@ -106,6 +108,30 @@ pnpm harness:verify # 组合层与 runtime closure 的契约
 **上游一改缝，这两个文件立刻红，而不是等打包或运行时才炸。**
 
 抓不到：任何和真实进程、环境变量、子进程有关的事。
+
+### 第 1.5 层：boot 整棵插件树（秒级，但要先构建）
+
+```bash
+pnpm test:fork:boot   # 先 build:product-packages，再 boot
+```
+
+`tests/minke-fork-boot.test.mjs` 把 fork 自己的 `cordis.patch.yml` 原样喂给 `boot()`，
+断言 `subagent_claude_code` 真的注册到了 **host 层**。它补的正是第 1 层够不着、
+第 3 层才暴露的那一格：**「插件已启用」不等于工具可见**。
+
+单独成文件、单独一个 script，因为它有两个第 1 层没有的前置：
+`packages/harness-overlay/lib/` 是 `.gitignore` 掉的构建产物（所以 script 里先
+`build:product-packages`），而且 `boot()` 会留下活着的 handle，runner 不加
+`--test-force-exit` 就挂着不退。
+
+**上游新增一个依赖 `connection` 的插件时这条会红**——boot 要求每个 entry 都激活，
+而我们为了不绑端口把 `connection` / `webserver` / `web-runtime` 关掉了。这不是 fork
+坏了：把那个插件的 id 加进文件里的 `CONNECTION_DEPENDENTS` 即可，测试的失败信息
+会直接告诉你该这么做。注意 id 取的是 `cordis.patch.yml` 里的 `id:`，不是包名
+（`@deepseek-ai/dsh-session-log-export` 的 id 是 `session-log-download`）。
+
+由来见第 4 节 v0.4.0 那条：这份覆盖原先是白蹭上游 `tests/web-search.test.mjs` 的，
+上游把那条测试改回纯单元测试之后就没了，现在由 fork 自己拥有。
 
 ### 第 2 层：staged runtime（分钟级）
 
@@ -247,6 +273,10 @@ fork 加了 `./fork`，同一行位置。两条都留，fork 那条排在后面�
    **顺带的好消息**：这条测试现在是 fork 唯一一条真跑起来的上游测试——
    它等于在 CI 里替我们验了「fork 的 host 插件能在新版 harness 上加载、
    `subagent_claude_code` 确实注册到 host 层」。以前这只能靠第 3 层手验。
+
+   > **这条好消息只活了一个版本。** v0.4.0 上游把这条测试改回了纯单元测试，
+   > 覆盖随之消失。现在它由 fork 自己的 `tests/minke-fork-boot.test.mjs` 拥有，
+   > 见第 3 节第 1.5 层。**寄生在上游测试上的覆盖会被上游无声收走**——这是教训。
 
 `cordis.patch.yml`、`skin.*`、`runtime-prune.mjs`、`manifest.json` 上游一行没动。
 皮肤依赖的 bootstrap 结构也没变——`data-slot` 那圈选择器原样生效。
