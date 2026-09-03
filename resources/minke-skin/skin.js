@@ -1,5 +1,5 @@
 /*
- * Fork 皮肤运行时，document_start 注入。
+ * Fork 皮肤运行时。
  *
  * 只做三件事：解析当前主题、写到 <html data-minke-skin>、给一个切换快捷键。
  * 配色全部在 skin.css 里，这里不产生任何样式字符串。
@@ -8,6 +8,15 @@
  *   photo | aurora | paper | mono | off | auto
  * auto 按日期在四个视觉主题之间轮换。
  * 快捷键：Alt+Shift+K 依次切换。
+ *
+ * 分发：由 desktop/preload/minke-skin.ts 用 webFrame.executeJavaScript 注入到
+ * 页面的 main world。**不能用 preload 自己的 isolated world**——那边的
+ * localStorage 未必是 Harness origin 的那一份。
+ *
+ * 背景图的 data: URI 由注入方先写进 globalThis.__minkeSkinBackgrounds。
+ * 这里不认识文件路径：v0.4.0 之前走的是 chrome.runtime.getURL()，扩展没了之后
+ * 相对路径会解析到 Harness 的 HTTP origin，只有 data: URI 不依赖任何 origin。
+ * 私人配图在 .gitignore 里，clone 下来那两档取不到值，对应的 var() 回落到 none。
  */
 (() => {
   const STORAGE_KEY = "minke.skin";
@@ -66,20 +75,30 @@
     }, 1200);
   }
 
-  // 背景图必须走扩展 URL：相对路径会解析到 Harness 的 HTTP origin。
-  // 一个主题一张图，变量名和 skin.css 里的 var() 一一对应。
-  const BACKGROUNDS = {
-    "--minke-background-image": "minke-background.jpeg",
-    "--minke-background-image-aurora": "minke-background-aurora.jpeg",
-    "--minke-background-image-mono": "minke-background-mono.jpeg",
-  };
-  for (const [property, file] of Object.entries(BACKGROUNDS)) {
-    document.documentElement.style.setProperty(
-      property,
-      `url("${chrome.runtime.getURL(file)}")`,
-    );
+  /** documentElement 要等一下：preload 注入得比 document_start 还早。 */
+  function whenRoot(run) {
+    if (document.documentElement !== null) {
+      run();
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (document.documentElement === null) return;
+      observer.disconnect();
+      run();
+    });
+    observer.observe(document, { childList: true, subtree: true });
   }
-  applySkin(readChoice());
+
+  whenRoot(() => {
+    // 一个主题一张图，变量名和 skin.css 里的 var() 一一对应。
+    // 取不到的（私人配图没在本机）就不写，var() 自己回落到 none。
+    const backgrounds = globalThis.__minkeSkinBackgrounds ?? {};
+    for (const [property, url] of Object.entries(backgrounds)) {
+      if (typeof url !== "string" || url === "") continue;
+      document.documentElement.style.setProperty(property, `url("${url}")`);
+    }
+    applySkin(readChoice());
+  });
 
   addEventListener("keydown", (event) => {
     if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return;

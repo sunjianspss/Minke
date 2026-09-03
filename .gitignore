@@ -51,5 +51,5 @@ docs/research
 # 皮肤的私人配图：仓库是公开的，图不进历史。
 # 只有 minke-background.jpeg（默认 photo 档）随仓库分发，
 # aurora / mono 两档自备图片放在同目录下即可，缺了就只剩底色。
-resources/desktop-style-extension/minke-background-aurora.jpeg
-resources/desktop-style-extension/minke-background-mono.jpeg
+resources/minke-skin/minke-background-aurora.jpeg
+resources/minke-skin/minke-background-mono.jpeg
