@@ -57,19 +57,33 @@
   （见下面那条「断言棘轮」）
 - `tests/harness-overlay.test.mjs` — `runtimePackages` 的 deepEqual 换成 fork 自己的清单
   （上游 v0.2.0 起断言它是空的）
-- `tests/macos-window-css.test.mjs` — `content_scripts` 的 deepEqual 改成不变量断言
-- `tests/web-search.test.mjs` — 解析 hook 加上 `…overlay/fork` 子路径；host 层工具
-  清单的 deepEqual 从 `[]` 收窄成 `["subagent_claude_code"]`
-- `resources/desktop-style-extension/manifest.json` — 注入 `skin.css` / `skin.js`
+- `tests/macos-window-css.test.mjs` — 上游那条「不得出现 `session.defaultSession`
+  **或** `extensions.loadExtension`」收窄成两条：禁 `defaultSession` 照旧，
+  `loadExtension` 改成只许挂在 `#surfaceSession` 上（v0.4.0 起，见下面「皮肤的
+  加载点」）
+- `resources/desktop-style-extension/manifest.json` — 注入 `skin.css` / `skin.js`。
+  **上游 v0.4.0 已经删掉了这个文件**，fork 整份留着
+- `desktop/main/main-window.ts` — 恢复 `installSurfaceBootstrap()` 与
+  `#macOSSurfaceBootstrapRoot()`（v0.4.0 起）
+- `desktop/main/application.ts` — 恢复 `await windows.installSurfaceBootstrap()`
+  的调用，排在 `installPermissionPolicy()` 之前（v0.4.0 起）
+- `forge.config.ts` — `extraResource` 补回 `resources/desktop-style-extension`
+  （v0.4.0 起）
 - `desktop/renderer/styles.css` — 一行 `@import "./skin.css"`
-- `.gitignore` — 忽略 `.claude/settings.local.json`
+- `.gitignore` — 忽略 `.claude/settings.local.json`；忽略 aurora / mono 两档的私人配图
+
+`tests/web-search.test.mjs` 不再是被改的上游文件：上游 v0.4.0 把它从「boot 整棵
+插件树」改回了纯单元测试，fork 那两处补丁没有了作用对象，同步时整个提交被 skip。
+**代价是 fork 在 CI 里唯一一条真跑起来的上游测试没了**——「fork 的 host 插件能在
+新版 harness 上加载」重新只能靠第 3 层手验。
 
 **断言棘轮（v0.3.0 起）。** 上游加了 `tests/assertion-policy.test.mjs`：它扫全仓库
 对「读进来的源码文本」做的 `assert.match`，和 `config/source-assertion-baseline.json`
 **逐文件精确比对**——多了红，少了也红。fork 的两个测试文件本来就是靠读上游源码来锁缝的，
 天然全是这种断言，所以必须在 baseline 里登记。**以后给 `tests/minke-*.test.mjs` 增删
 一条 `assert.match`，同一次改动里就要改 baseline 的数字**，否则 `pnpm test:desktop` 红。
-当前配额：`minke-fork` 13 条、`minke-skin` 12 条。
+当前配额：`minke-fork` 13 条、`minke-skin` 16 条。改上游测试文件同样要跟——
+v0.4.0 那次把 `macos-window-css` 的一条断言拆成两条，baseline 从 141 改成 142。
 
 **`vendor/deepseek-harness` 永远不改。** `tests/harness-source-boundary.test.mjs`
 会断言这个 submodule 是干净的；要改 harness 行为，走 L2/L3，不走 patch。
@@ -197,6 +211,7 @@ pnpm harness:stage
 |---|---|---|---|
 | 2026-08-24 | `bd23660 → 3c79629` | `0.1.0-rc.8 → 0.1.1-rc.1` | rebase 零冲突 |
 | 2026-08-25 | `3c79629 → 104249b`（v0.3.0，73 个提交） | `0.1.1-rc.1 → 0.1.1-rc.2` | 1 处冲突 + 2 处新缝 |
+| 2026-09-03 | `104249b → 39cf048`（v0.4.0，31 个提交） | `0.1.1-rc.2 → 0.1.2-alpha.5` | 皮肤的注入路径被上游拆掉，重接 |
 
 上游那次改了三块：Host RPC 换成 `MinkeHostRpcEndpoint` 泛型分发（未知 endpoint
 现在返回 `bad-request`）、`main.ts` 拆出 `harness-lifecycle.ts` 与
@@ -240,6 +255,53 @@ fork 加了 `./fork`，同一行位置。两条都留，fork 那条排在后面�
 `test:desktop` 283 条只剩 Homebrew node 那条恒失败的（见 `.claude/skills/verify`）、
 `harness:stage` 127.4 MiB/11947 文件（预算 150 MiB/15000）、隔离 harness 干净启动、
 MCP fixture 的 `initialize → tools/list` 握手跑通且子进程在、5 档皮肤逐帧确认。
+
+#### 2026-09-03：v0.4.0 —— 皮肤的加载点被上游拆掉
+
+这次和前两次性质不同。上游没碰 fork 的任何围栏，却把**皮肤赖以存在的那条注入路径**
+整个拆了，两个提交连着做的：
+
+1. `63861c2 fix(macos): defer credential access until authorization` —— 主窗口从
+   `session.defaultSession` 搬到专用分区 `minke-main-window`（`#surfaceSession`），
+   为的是推迟 macOS 凭据访问。`installSurfaceBootstrap()` 里那句 `loadExtension`
+   顺手删了，`early.css` 改走 preload 的 `webFrame.insertCSS`。
+2. `7471219 build(package): harden macOS artifact verification` —— 既然没人加载了，
+   `manifest.json` 整个文件删掉，`forge.config.ts` 的 `extraResource` 也摘掉。
+
+于是 `skin.css` / `skin.js` 还在，但没有任何代码去加载它们——**这是一次静默失效，
+rebase 的冲突只报 `manifest.json`，硬解掉冲突皮肤照样是死的**。
+
+fork 的选择是把扩展加载恢复回来，但挂在上游新建的 `#surfaceSession` 上而不是
+`defaultSession`：上游真正关心的不变量（启动不得初始化 Chromium 的持久化 default
+Session）没有被破坏，凭据推迟访问那个修复也照样成立。代价是 fork 改的上游文件从
+2 个涨到 4 个（`main-window.ts`、`application.ts`、`forge.config.ts`、
+`tests/macos-window-css.test.mjs`），而且 `main-window.ts` 那两处是**中间插入**不是
+末尾追加——上游再重构 `MainWindowRuntime` 就要跟一次。
+
+这三处新缝全部锁进了 `tests/minke-skin.test.mjs` 的
+`the extension delivery path the skin rides on stays wired`：加载点、根目录解析、
+启动顺序、打包条目，断一处就红。
+
+rebase 17 个提交，冲突集中在三处：`manifest.json`（modify/delete，保留 fork 版本）、
+`tests/macos-window-css.test.mjs`（上游重写，逐次取上游侧、末尾统一重接）、
+`cordis.patch.yml`（上游也在末尾追加了 `ui-schedule`，两边都留、fork 块排最后）。
+`tests/web-search.test.mjs` 那个 fork 提交整个 skip 掉了，原因见第 2 节末尾。
+
+**又一次踩到「bump 后不重建 runtime」那个坑**，而且这次它伪装成了别的样子：
+`test:desktop` 报 `embedded-node-permissions` 失败、`process-environment-boundaries.patch`
+打不上。看着像 fork 改坏了 patch，实际是 `runtime/host` 还是上一版 harness 的产物、
+patch 打在已经打过的代码上。`pnpm harness:stage` 之后就好。
+**判据：先 `git diff --name-only origin/main..HEAD -- patches/ scripts/harness/`
+看 fork 到底有没有碰到相关路径**，比拉对照 worktree 快得多。
+
+排查这条时还踩了两个会给出无效结论的假象，都不是真信号：
+
+- **对照 worktree 少了 `node_modules`**。`git worktree add` 出来的干净 origin/main
+  照样红，但红的原因是依赖没装，不是同一个失败。要么装完再比，要么干脆别比。
+- **单独 `node --test tests/某条.test.mjs` 会 `ERR_MODULE_NOT_FOUND`**
+  （`Cannot find package '@minke/harness-overlay'`）。上游测试依赖 `pnpm test:desktop`
+  里配的解析器，脱离 runner 单跑必红，和改动无关。缩小范围要用 runner 的过滤参数，
+  不要直接 `node --test`。
 
 ## 5. 现有 fork 功能
 
@@ -338,6 +400,12 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 
 `resources/desktop-style-extension/` 在 Harness 页面上注入皮肤，
 `desktop/renderer/skin.css` 管 Electron 启动窗口。
+
+**加载点（v0.4.0 起由 fork 拥有）。** 上游已经不加载这个扩展了，是 fork 在
+`desktop/main/main-window.ts` 的 `installSurfaceBootstrap()` 里把它挂到
+`#surfaceSession` 上，由 `application.ts` 在 `installPermissionPolicy()` 之前调用，
+打包靠 `forge.config.ts` 的 `extraResource`。四处缺一皮肤就整个失效，而且是静默的
+——所以它们被 `tests/minke-skin.test.mjs` 锁住了。原委见第 4 节 v0.4.0 那条。
 
 主题存在 `localStorage["minke.skin"]`，可选 `photo`（默认）、`aurora`、`paper`、
 `mono`、`off`、`auto`（按日期在四个视觉主题间轮换）。**Alt+Shift+K 依次切换。**
