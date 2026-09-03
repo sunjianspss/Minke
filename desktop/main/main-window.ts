@@ -102,6 +102,23 @@ export class MainWindowRuntime {
     return this.#window;
   }
 
+  // >>> minke-fork
+  // 上游 v0.4.0 把主窗口从 session.defaultSession 搬到了 #surfaceSession
+  // （commit 63861c2，为了推迟 macOS 凭据访问），顺手删掉了这里的
+  // loadExtension——早期注入改走 preload 的 webFrame.insertCSS。fork 的皮肤
+  // （skin.css / skin.js）是靠扩展的 content_scripts 注入的，那条路一断皮肤就
+  // 整个失效，所以在新的 surface Session 上把扩展加载恢复回来。
+  //
+  // 挂 #surfaceSession 而不是 defaultSession：上游那条不变量（启动不得初始化
+  // Chromium 的持久化 default Session）照样成立，扩展只活在这个内存 Session 里。
+  async installSurfaceBootstrap(): Promise<void> {
+    if (process.platform !== "darwin") return;
+    await this.#surfaceSession.extensions.loadExtension(
+      this.#macOSSurfaceBootstrapRoot(),
+    );
+  }
+  // <<< minke-fork
+
   installPermissionPolicy(): void {
     installHarnessPermissionPolicy(this.#surfaceSession, {
       harnessUrl: this.#options.harnessUrl,
@@ -345,6 +362,20 @@ export class MainWindowRuntime {
   #bootstrapUrl(): string | undefined {
     return MAIN_WINDOW_VITE_DEV_SERVER_URL || undefined;
   }
+
+  // >>> minke-fork
+  // 皮肤扩展的根目录。打包后走 process.resourcesPath——forge.config.ts 的
+  // extraResource 里 fork 也补回了这一条。
+  #macOSSurfaceBootstrapRoot(): string {
+    return app.isPackaged
+      ? join(process.resourcesPath, "desktop-style-extension")
+      : join(
+          app.getAppPath(),
+          "resources",
+          "desktop-style-extension",
+        );
+  }
+  // <<< minke-fork
 
   #appIconPath(): string {
     return app.isPackaged
