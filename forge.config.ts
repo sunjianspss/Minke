@@ -224,6 +224,11 @@ const config: ForgeConfig = {
     ],
     extraResource: [
       join(projectRoot, "runtime", "host"),
+      // >>> minke-fork
+      // 上游 v0.4.0 不再加载这个扩展，于是把它从打包里摘了。fork 的皮肤还靠它，
+      // 加载点在 main-window.ts 的 installSurfaceBootstrap()。
+      join(projectRoot, "resources", "desktop-style-extension"),
+      // <<< minke-fork
       join(projectRoot, "resources", "licenses"),
       appIcon,
       join(iconRoot, "trayTemplate.png"),
