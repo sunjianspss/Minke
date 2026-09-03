@@ -59,16 +59,36 @@ function runSkinScript({ stored } = {}) {
   return { appended, declarations, documentElement, listeners, sandbox, store };
 }
 
-test("the background image ships with the extension resources", () => {
+// 只有 photo 那张随仓库分发。aurora / mono 用的是私人配图，仓库是公开的，
+// 所以图不进历史（见 .gitignore），clone 下来那两档只剩底色。
+const SHIPPED_BACKGROUND = "minke-background.jpeg";
+const LOCAL_BACKGROUNDS = [
+  "minke-background-aurora.jpeg",
+  "minke-background-mono.jpeg",
+];
+const BACKGROUND_FILES = [SHIPPED_BACKGROUND, ...LOCAL_BACKGROUNDS];
+
+test("the shipped background stays with the extension resources", () => {
   assert.ok(
     existsSync(
       new URL(
-        "../resources/desktop-style-extension/minke-background.jpeg",
+        `../resources/desktop-style-extension/${SHIPPED_BACKGROUND}`,
         import.meta.url,
       ),
     ),
     "forge 的 extraResource 整目录拷贝，图片必须留在这里",
   );
+});
+
+test("the private backgrounds never reach the public history", () => {
+  // 仓库公开，这两张一旦提交就进历史，之后删文件也清不掉。
+  const gitignore = read(".gitignore");
+  for (const file of LOCAL_BACKGROUNDS) {
+    assert.ok(
+      gitignore.includes(`resources/desktop-style-extension/${file}`),
+      `${file} 没被忽略，会跟着推进公开仓库`,
+    );
+  }
 });
 
 test("the skin hooks into upstream files with a single line each", () => {
@@ -81,7 +101,7 @@ test("the skin hooks into upstream files with a single line each", () => {
   assert.deepEqual(manifest.content_scripts[0].js, ["skin.js"]);
   assert.deepEqual(manifest.web_accessible_resources, [
     {
-      resources: ["minke-background.jpeg"],
+      resources: BACKGROUND_FILES,
       matches: ["http://127.0.0.1/*", "http://localhost/*"],
     },
   ]);
@@ -115,20 +135,40 @@ test("the skin punches through upstream's per-column panels", () => {
   );
 });
 
-test("the stable Harness background resolves through the extension runtime", () => {
+test("every Harness background resolves through the extension runtime", () => {
   const { declarations } = runSkinScript();
 
+  // 变量名 → 文件名的映射就是 skin.js 和 skin.css 之间的契约，两边都锁住。
   assert.deepEqual(declarations, [
     [
       "--minke-background-image",
       'url("chrome-extension://minke/minke-background.jpeg")',
     ],
+    [
+      "--minke-background-image-aurora",
+      'url("chrome-extension://minke/minke-background-aurora.jpeg")',
+    ],
+    [
+      "--minke-background-image-mono",
+      'url("chrome-extension://minke/minke-background-mono.jpeg")',
+    ],
   ]);
-  assert.match(extensionSkin, /var\(--minke-background-image(?:,\s*none)?\)/);
+  for (const [property] of declarations) {
+    assert.match(
+      extensionSkin,
+      new RegExp(`var\\(${property}(?:,\\s*none)?\\)`, "u"),
+      `${property} 声明了却没人用，图片白下载`,
+    );
+  }
   assert.doesNotMatch(
     extensionSkin,
-    /url\(["']?\.\/minke-background\.jpeg/,
+    /url\(["']?\.\/minke-background/,
     "相对 URL 会解析到 Harness 的 HTTP origin，必须走扩展 URL",
+  );
+  // 每张图只归一个主题，manifest 里放行的文件和运行时用到的必须一一对应。
+  assert.deepEqual(
+    declarations.map(([, value]) => value.match(/([^/"]+\.jpeg)/u)[1]),
+    BACKGROUND_FILES,
   );
 });
 

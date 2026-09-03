@@ -22,7 +22,9 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "minke-background.jpeg"
+        "minke-background.jpeg",
+        "minke-background-aurora.jpeg",
+        "minke-background-mono.jpeg"
       ],
       "matches": [
         "http://127.0.0.1/*",
