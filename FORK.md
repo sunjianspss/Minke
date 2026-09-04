@@ -59,6 +59,8 @@
   （上游 v0.2.0 起断言它是空的）
 - `desktop/preload/desktop-preload.ts` — 两行：`import { installMinkeSkin }` 和
   紧跟 `webFrame.insertCSS(macOSSurfaceCss)` 的那次调用（v0.4.0 起）
+- `desktop/main/main.ts` — 两行：`import { installMinkeSkinStore }` 和
+  `runDesktopApplication()` 之后的那次调用（皮肤选择的持久化，见第 5 节）
 - `desktop/renderer/styles.css` — 一行 `@import "./skin.css"`
 - `.gitignore` — 忽略 `.claude/settings.local.json`；忽略 aurora / mono 两档的私人配图
 
@@ -74,7 +76,7 @@
 **逐文件精确比对**——多了红，少了也红。fork 的两个测试文件本来就是靠读上游源码来锁缝的，
 天然全是这种断言，所以必须在 baseline 里登记。**以后给 `tests/minke-*.test.mjs` 增删
 一条 `assert.match`，同一次改动里就要改 baseline 的数字**，否则 `pnpm test:desktop` 红。
-当前配额：`minke-fork` 13 条、`minke-skin` 19 条。
+当前配额：`minke-fork` 13 条、`minke-skin` 23 条。
 
 顺带一条经验：**能用行为断言就别用源码文本断言**。「skin.js 不再依赖 `chrome`」
 原本写成 `assert.doesNotMatch(skinScript, /chrome\.runtime\.getURL\(/)`，结果被
@@ -459,8 +461,30 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 内存态 session，Electron 不允许往内存态 session 加载扩展。别再试，原委见第 4 节
 v0.4.0 那条。
 
-主题存在 `localStorage["minke.skin"]`，可选 `photo`（默认）、`aurora`、`paper`、
-`mono`、`off`、`auto`（按日期在四个视觉主题间轮换）。**Alt+Shift+K 依次切换。**
+可选 `photo`（默认）、`aurora`、`paper`、`mono`、`off`、`auto`（按日期在四个视觉
+主题间轮换）。**Alt+Shift+K 依次切换。**
+
+**选择存在主进程，不存在页面里。** 一开始它在 `localStorage["minke.skin"]`，
+表现是切换当场生效、重启回到默认档——两条独立原因各自都足以让页面侧的存储
+活不过一次重启：
+
+1. 主窗口跑在 `session.fromPartition("minke-main-window")` 上，**没有 `persist:`
+   前缀就是内存态 session**，localStorage 关掉 app 就没了。这个内存态正是上游
+   63861c2 推迟 Keychain 初始化的手段，动不得。
+2. harness 每次都 `--port 0` 随机端口，页面 origin 跟着变，而 localStorage 按
+   origin 分区。`~/.minke/Local Storage/leveldb` 里能看到十几个
+   `_http://127.0.0.1:<不同端口>` 各存一份。
+
+现在的路径：`desktop/main/minke-skin-store.ts` 用两个 IPC 通道读写
+`<userData>/desktop/minke-skin.json`（fork 自有文件，不并进上游的
+`MinkeConfigStore`——那要在 `minke-config.ts` 中间插四段）；`minke-skin.ts` 注入前
+先取一次初值写进 `globalThis.__minkeSkinChoice`，并用 `contextBridge` 递一个
+`__minkeSkinStore.save()` 给 main world 回写。通道名和合法值的白名单在
+`desktop/minke-skin-channels.ts`，两侧共用。`localStorage` 降级成兜底：桥不在时
+（测试沙箱、handler 没装上）本次会话仍然记得住。
+
+**这条缝只有第 4 层验得到**：静态断言、隔离 harness 都看不出「重启后还在不在」。
+判据是切一档非默认的、真退出 app、再开——以及 `cat ~/.minke/desktop/minke-skin.json`。
 
 配色全在 `skin.css`，`skin.js` 只负责解析选择并写到 `<html data-minke-skin>`。
 没有属性时走 photo，所以脚本执行前的第一帧就已经是最终样式，不会闪。
