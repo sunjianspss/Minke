@@ -90,25 +90,15 @@ function testOverlay(settingsPath, storageRoot) {
     { id: "directory-picker", disabled: true },
     { id: "model-runtime", disabled: true },
     { id: "minke-overlay", disabled: true },
-    {
-      id: "agent-presets",
-      config: {
-        default: "standard",
-        roots: [
-          {
-            path: join(
-              harnessRoot,
-              "apps",
-              "cli",
-              "config",
-              "agent-presets",
-            ),
-            trust: "system",
-          },
-        ],
-        includeUserRoot: false,
-      },
-    },
+    // Shipped presets 打包在 dsh-agent-presets 里，自动作为 system root 带上，
+    // 不需要也不该在这里写 roots 路径。
+    //
+    // **这条 boot 验不到 preset 层**：preset 的行引用的 dsh-tool-* 包只装在
+    // runtime/host 的闭包里，vendor/deepseek-harness 下解析不到，
+    // compositionInventory() 会报 standard 有 23 行 broken。所以这个文件只断言
+    // host 层。要看 preset 组合后的样子，用
+    // `dsh web --patch <fork patch> --dump-config`（走 runtime/host）。
+    { id: "agent-presets", config: { default: "standard" } },
   ];
 }
 
