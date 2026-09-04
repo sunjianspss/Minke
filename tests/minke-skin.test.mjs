@@ -17,12 +17,21 @@ const extensionSkin = read("resources/minke-skin/skin.css");
 const skinScript = read("resources/minke-skin/skin.js");
 const skinPreload = read("desktop/preload/minke-skin.ts");
 const desktopPreload = read("desktop/preload/desktop-preload.ts");
+const desktopMain = read("desktop/main/main.ts");
+const skinStore = read("desktop/main/minke-skin-store.ts");
+const skinChannels = read("desktop/minke-skin-channels.ts");
 
-/** 在隔离沙箱里跑一遍 skin.js，拿到它对页面做的全部动作。 */
-function runSkinScript({ stored } = {}) {
+/**
+ * 在隔离沙箱里跑一遍 skin.js，拿到它对页面做的全部动作。
+ *
+ * `injected` 是注入方（preload）写进去的初值，`bridged` 决定桥在不在——
+ * 桥就是主进程那条持久化通道，缺了它 skin.js 必须还能跑。
+ */
+function runSkinScript({ stored, injected, bridged = true } = {}) {
   const declarations = [];
   const listeners = [];
   const appended = [];
+  const saved = [];
   const store = new Map(stored === undefined ? [] : [["minke.skin", stored]]);
   const documentElement = {
     dataset: {},
@@ -35,6 +44,18 @@ function runSkinScript({ stored } = {}) {
   // 注入方（desktop/preload/minke-skin.ts）在 skin.js 之前写好这个全局，
   // 值是构建期内联的 data: URI。这里用可辨认的假值，只验映射关系。
   const sandbox = {
+    __minkeSkinChoice: injected,
+    // contextBridge 递进 main world 的那个对象。桥不在时整个键都不存在，
+    // skin.js 里的 ?. 必须自己扛住。
+    ...(bridged
+      ? {
+        __minkeSkinStore: {
+          save(choice) {
+            saved.push(choice);
+          },
+        },
+      }
+      : {}),
     __minkeSkinBackgrounds: {
       "--minke-background-image": "data:image/jpeg;base64,PHOTO",
       "--minke-background-image-aurora": "data:image/jpeg;base64,AURORA",
@@ -61,7 +82,30 @@ function runSkinScript({ stored } = {}) {
     setTimeout: () => 0,
   };
   runInNewContext(skinScript, sandbox);
-  return { appended, declarations, documentElement, listeners, sandbox, store };
+  return {
+    appended,
+    declarations,
+    documentElement,
+    listeners,
+    sandbox,
+    saved,
+    store,
+  };
+}
+
+/** 给测试用的按键器：默认就是 Alt+Shift+K。 */
+function pressSkinShortcut(listeners, overrides = {}) {
+  const keydown = listeners.find((entry) => entry.type === "keydown");
+  assert.ok(keydown, "皮肤切换必须挂在 keydown 上");
+  keydown.handler({
+    altKey: true,
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    code: "KeyK",
+    preventDefault: () => {},
+    ...overrides,
+  });
 }
 
 // 只有 photo 那张随仓库分发。aurora / mono 用的是私人配图，仓库是公开的，
@@ -104,6 +148,19 @@ test("the skin hooks into upstream files with a single line each", () => {
     desktopPreload,
     /webFrame\.insertCSS\(macOSSurfaceCss\);[\s\S]{0,200}?installMinkeSkin\(\);/u,
     "皮肤必须排在 early.css 之后注入，否则覆盖不掉它的底色",
+  );
+  // main.ts 同样只有两行：一个 import，一个调用，且调用必须在正常启动那条
+  // 分支里——凭据助手子进程没有窗口，不该也装这两个 handler。
+  // （上游 tests/module-boundaries.test.mjs 原本精确断言 entry 的 import 清单，
+  //  已按 FORK.md 第 2 节第 3 条松成子集断言，精确的那份就是这里。）
+  assert.match(
+    desktopMain,
+    /import \{ installMinkeSkinStore \} from "\.\/minke-skin-store\.ts";/u,
+  );
+  assert.match(
+    desktopMain,
+    /runDesktopApplication\(\);[\s\S]{0,200}?installMinkeSkinStore\(\);/u,
+    "皮肤存储的通道没装上，选择就跨不过重启",
   );
 });
 
@@ -239,6 +296,59 @@ test("auto rotates the visual skins by day and never yields off", () => {
     resolveSkin("auto", 3 * day),
     resolveSkin("auto", 3 * day + day - 1),
     "同一天内不该换主题",
+  );
+});
+
+test("the choice outlives the window through the main process", () => {
+  // 页面侧存不住：主窗口的 session 没有 persist: 前缀（内存态，上游用它推迟
+  // Keychain 初始化），localStorage 关掉 app 就没了；harness 每次还换随机端口，
+  // origin 跟着变。所以初值必须由注入方给，回写必须走桥。
+  assert.equal(
+    runSkinScript({ injected: "mono", stored: "paper" })
+      .documentElement.dataset.minkeSkin,
+    "mono",
+    "注入方给了初值就以它为准，页面存储只是兜底",
+  );
+
+  const { listeners, saved, store } = runSkinScript({ injected: "off" });
+  pressSkinShortcut(listeners);
+  assert.deepEqual(saved, ["auto"], "切换必须回写到主进程那一份");
+  assert.equal(store.get("minke.skin"), "auto", "本次会话的兜底也要跟着写");
+
+  // 桥不在（测试宿主、非 macOS、handler 没装上）时不能炸，退回页面存储即可。
+  const withoutBridge = runSkinScript({ stored: "paper", bridged: false });
+  assert.equal(withoutBridge.documentElement.dataset.minkeSkin, "paper");
+  pressSkinShortcut(withoutBridge.listeners);
+  assert.equal(withoutBridge.store.get("minke.skin"), "mono");
+  assert.deepEqual(withoutBridge.saved, []);
+});
+
+test("both sides of the skin bridge agree on the same channels", () => {
+  const { sandbox } = runSkinScript();
+  const declared = [
+    ...skinChannels.matchAll(/^\s{2}"([a-z]+)",$/gmu),
+  ].map(([, choice]) => choice);
+  assert.deepEqual(
+    declared,
+    Array.from(sandbox.__minkeSkin.CHOICES),
+    "主进程的白名单和 skin.js 的 CHOICES 必须逐项一致，否则存得进读不出",
+  );
+
+  // 通道名两侧共用同一个常量文件，preload 不许自己写字符串字面量。
+  assert.match(
+    skinPreload,
+    /ipcRenderer\.invoke\(MINKE_SKIN_READ_CHANNEL\)/u,
+    "注入前必须先取一次初值",
+  );
+  assert.match(
+    skinPreload,
+    /contextBridge\.exposeInMainWorld\(\s*"__minkeSkinStore"/u,
+    "main world 够不到 ipcRenderer，回写只能靠 contextBridge 递过去",
+  );
+  assert.match(
+    skinStore,
+    /join\(\s*app\.getPath\("userData"\),\s*"desktop",/u,
+    "选择要落在 userData 里，别写进随时会被清掉的地方",
   );
 });
 

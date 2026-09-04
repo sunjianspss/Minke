@@ -207,16 +207,34 @@ test("the desktop entry remains a composition root", () => {
     ["./main-window"],
   );
 
+  const entryImports = productionImports
+    .filter(
+      ({ path }) =>
+        path === resolve(projectRoot, "desktop/main/main.ts"),
+    )
+    .map(({ specifier }) => specifier)
+    .sort();
+  // >>> minke-fork
+  // 原来是 assert.deepEqual(entryImports, expectedImports)——精确清单，fork 每
+  // 往 entry 加一个入口都要改一次上游测试。按 FORK.md 第 2 节第 3 条松成子集
+  // 断言：上游关心的那四条必须都在，多出来的只允许是同目录的本地模块（entry
+  // 仍然只做组合，不许直接够到深处）。fork 自己那条的精确断言在
+  // tests/minke-skin.test.mjs 里。
+  for (const specifier of expectedImports) {
+    assert.ok(
+      entryImports.includes(specifier),
+      `${specifier} 不再由 desktop/main/main.ts 组合`,
+    );
+  }
   assert.deepEqual(
-    productionImports
-      .filter(
-        ({ path }) =>
-          path === resolve(projectRoot, "desktop/main/main.ts"),
-      )
-      .map(({ specifier }) => specifier)
-      .sort(),
-    expectedImports,
+    entryImports.filter(
+      (specifier) =>
+        !expectedImports.includes(specifier) &&
+        !specifier.startsWith("./"),
+    ),
+    [],
   );
+  // <<< minke-fork
 });
 
 test("the remote-access package stays independent of desktop transports", () => {
