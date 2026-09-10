@@ -210,6 +210,9 @@ pnpm test:fork && pnpm harness:verify
 于是全绿但什么都没验证。按这个顺序补：
 
 ```bash
+# 上游可能把 dsh-* 开发依赖改成 link: 到 submodule 源码，不重装就还是旧版本
+pnpm install
+
 # fork 的 runtimePackages 在新版 harness 里是否还存在
 node -e 'import("./scripts/harness/contract.mjs")
   .then(m => m.verifyHarnessContract(process.cwd()))
@@ -234,6 +237,7 @@ pnpm harness:stage
 | 2026-08-24 | `bd23660 → 3c79629` | `0.1.0-rc.8 → 0.1.1-rc.1` | rebase 零冲突 |
 | 2026-08-25 | `3c79629 → 104249b`（v0.3.0，73 个提交） | `0.1.1-rc.1 → 0.1.1-rc.2` | 1 处冲突 + 2 处新缝 |
 | 2026-09-03 | `104249b → 39cf048`（v0.4.0，31 个提交） | `0.1.1-rc.2 → 0.1.2-alpha.5` | 皮肤的注入路径被上游拆掉，重接 |
+| 2026-09-10 | `39cf048 → 458980e`（v0.5.0，4 个提交） | `0.1.2-alpha.5 → 0.1.3-alpha.1` | rebase 零冲突，boot 名单补两项 |
 
 上游那次改了三块：Host RPC 换成 `MinkeHostRpcEndpoint` 泛型分发（未知 endpoint
 现在返回 `bad-request`）、`main.ts` 拆出 `harness-lifecycle.ts` 与
@@ -355,6 +359,38 @@ patch 打在已经打过的代码上。`pnpm harness:stage` 之后就好。
   （`Cannot find package '@minke/harness-overlay'`）。上游测试依赖 `pnpm test:desktop`
   里配的解析器，脱离 runner 单跑必红，和改动无关。缩小范围要用 runner 的过滤参数，
   不要直接 `node --test`。
+
+#### 2026-09-10：v0.5.0
+
+上游只有 4 个提交（About 弹窗的层级修正、harness 同步到 alpha.1、发版、
+agent-browser smoke 遵循 reduced motion），改动全在 fork 碰不到的地方：
+`patches/deepseek-harness/`（新增上游自己的 `win32-directory-picker.patch`，
+重写进程边界与后台进程两个 patch）、`scripts/harness/runtime-process-policy.mjs`、
+各 package 版本号。`cordis.patch.yml`、`skin.*`、`runtime-prune.mjs`
+一行没动，rebase 24 个提交零冲突。
+
+**新踩到一步：`pnpm install` 现在是同步流程的一部分。** 上游把
+`dsh-invariants` / `dsh-llm` / `dsh-typert-protocol` 三个开发依赖从 registry
+版本改成 `link:vendor/deepseek-harness/...`（`pnpm-workspace.yaml` 的
+`overrides`），不重装的话 typecheck 解析到的还是上一版 harness 的那份声明。
+已经补进上面「上游 bump 了 harness」那段流程的第一步。
+
+**真正要改的只有一处**：新 harness 的 `client/file-upload` 直接
+`inject connection`，而它是 `fileUploads` 服务的唯一提供者，于是只依赖
+`fileUploads` 的 `api/session-controller` 被连锁挂住，
+`tests/minke-fork-boot.test.mjs` 两个 entry 停在 pending。往
+`CONNECTION_DEPENDENTS` 补 `file-upload` / `session-controller` 即可——
+**注意那个名单吃的是 `cordis.patch.yml` 里的 `id`，不是包名后缀**：
+失败信息打印的是 `@deepseek-ai/dsh-client-file-upload`，照抄成
+`client-file-upload` 是无效的，那样只会多出两行谁也匹配不上的 disabled 行，
+测试照旧红。
+
+验证：contract OK、typecheck 三工程 `--force` 全量过、`harness:stage` 141.2 MiB
+/11606 文件、`test:fork` 24/24、`test:fork:boot` 1/1、`test:assertions` 3/3
+（这次没增删 `assert.match`，baseline 配额不变）、`test:desktop` 的
+core / ui / host 209 / 282 / 325 全绿，harness 组 203/204——红的那条是
+Homebrew node 上恒失败的 prune 用例（见 `.claude/skills/verify`），
+和本次同步无关：该测试与 `runtime-prune.mjs` 都与 rebase 前逐字节相同。
 
 ## 5. 现有 fork 功能
 
