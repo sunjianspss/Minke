@@ -74,7 +74,14 @@ registerHooks({
 // 留住真实的 host 层和 Agent Preset，只摘掉会绑端口、起 watcher 的那些行。
 // `connection` 一开就连锁要 webServer + webRuntime，所以三个一起关；凡是
 // 依赖 connection 的上游插件也得跟着关（下面 CONNECTION_DEPENDENTS）。
-const CONNECTION_DEPENDENTS = ["session-log-download"];
+const CONNECTION_DEPENDENTS = [
+  "session-log-download",
+  // dsh 0.1.3-alpha.1 起：client-file-upload 直接 inject connection，而它又是
+  // fileUploads 服务的唯一提供者，所以只依赖 fileUploads 的 api-session-controller
+  // 也得跟着关，否则它会一直 pending。
+  "file-upload",
+  "session-controller",
+];
 
 function testOverlay(settingsPath, storageRoot) {
   return [
