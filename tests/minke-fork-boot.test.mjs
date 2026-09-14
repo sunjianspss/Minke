@@ -81,6 +81,10 @@ const CONNECTION_DEPENDENTS = [
   // 也得跟着关，否则它会一直 pending。
   "file-upload",
   "session-controller",
+  // dsh 0.1.5-rc.2 起：open-in-app（webServer + connection + subprocess）和
+  // ui-deliverables（connection + sessionController）都直连 connection。
+  "open-in-app",
+  "ui-deliverables",
 ];
 
 function testOverlay(settingsPath, storageRoot) {
