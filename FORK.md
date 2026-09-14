@@ -238,6 +238,7 @@ pnpm harness:stage
 | 2026-08-25 | `3c79629 → 104249b`（v0.3.0，73 个提交） | `0.1.1-rc.1 → 0.1.1-rc.2` | 1 处冲突 + 2 处新缝 |
 | 2026-09-03 | `104249b → 39cf048`（v0.4.0，31 个提交） | `0.1.1-rc.2 → 0.1.2-alpha.5` | 皮肤的注入路径被上游拆掉，重接 |
 | 2026-09-10 | `39cf048 → 458980e`（v0.5.0，4 个提交） | `0.1.2-alpha.5 → 0.1.3-alpha.1` | rebase 零冲突，boot 名单补两项 |
+| 2026-09-14 | `458980e → ffb0da8`（v0.6.1，23 个提交） | `0.1.3-alpha.1 → 0.1.5-rc.2` | 1 处冲突，boot 名单再补两项 |
 
 上游那次改了三块：Host RPC 换成 `MinkeHostRpcEndpoint` 泛型分发（未知 endpoint
 现在返回 `bad-request`）、`main.ts` 拆出 `harness-lifecycle.ts` 与
@@ -391,6 +392,55 @@ agent-browser smoke 遵循 reduced motion），改动全在 fork 碰不到的地
 core / ui / host 209 / 282 / 325 全绿，harness 组 203/204——红的那条是
 Homebrew node 上恒失败的 prune 用例（见 `.claude/skills/verify`），
 和本次同步无关：该测试与 `runtime-prune.mjs` 都与 rebase 前逐字节相同。
+
+#### 2026-09-14：v0.6.1
+
+上游 23 个提交、连发 v0.6.0 和 v0.6.1，主线是 sidebar 改造
+（`19f7193` 把 Minke 的 tab 塞进 DSH 原生容器）、files 渲染预览、
+models 的运行时状态，外加两次 harness 同步
+（`0.1.3-alpha.1 → 0.1.5-alpha.2 → 0.1.5-rc.2`）。
+
+rebase 26 个提交**只冲突一处**：`package.json` 的脚本区，上游加
+`test:desktop:harness-navigation`、fork 加 `test:fork`，落在同一行位置。
+两条都留，上游那条在前。`cordis.patch.yml`、`skin.*`、`runtime-prune.mjs`、
+`build-product-packages.mjs` 上游一行没动；`config/harness-runtime.json` 还是
+老样子——上游随两次 harness 同步改头部，fork 改尾部的 `runtimePackages`，
+不同 hunk 自动合。
+
+**又是 `CONNECTION_DEPENDENTS`，同一个位置第二次。** 新 harness 的
+`open-in-app`（inject `webServer` / `connection` / `subprocess`）和
+`ui-deliverables`（inject `connection` / `sessionController`）都直连 connection，
+隔离 boot 里两个 entry 停在 pending。补进名单即可（id 取自
+`cordis.patch.yml`，不是包名后缀——这条坑上一版记过）。**上游每加一个依赖
+connection 的插件，这里就要补一次**，失败信息里已经写好了处方，照做就行。
+
+**sidebar 被重做，但 `data-slot` 契约扛住了。** 这次最该担心的是皮肤：
+上游把 tab 换成原生容器，理论上足以让 `[data-slot="sidebar"]` 那圈穿透规则落空。
+实测没有——从视口里侧边栏位置往上钻完整祖先链，`sidebar.workspaces` /
+`sidebar` / `sidebarCol` / `frame` 逐层 `rgba(0, 0, 0, 0)`，皮肤照旧透到底。
+**锚 `data-slot`、取直接子元素、不猜层数**这条选择第二次兑现了。
+
+验证：contract OK、typecheck 三工程过、`harness:stage` 145.8 MiB/11566 文件、
+`test:fork` 24/24、`test:fork:boot` 1/1、`test:desktop` 223/224（红的那条是
+Homebrew node 上恒失败的 prune 用例，见 `.claude/skills/verify`）、隔离 harness
+干净启动且 `--dump-config` 里 fork 四行齐全、MCP fixture 的
+`initialize → notifications/initialized → tools/list` 握手跑通且子进程活着、
+5 档皮肤逐帧确认、快捷键从 `off` 推进到 `auto`（当天解析成 `paper`）再到 `photo`，
+主进程侧收到的 save 是 `["auto", "photo"]`——**持久化走的是主进程那一份，不是页面**。
+
+**打包体积要盯一眼了**：145.8 MiB / 11566 文件，预算是 150 MiB / 15000。
+文件数还很宽裕，字节数只剩 4 MiB 余量（v0.3.0 时是 127.4 MiB）。
+下次 harness bump 如果再涨，得先看 `runtime-prune.mjs` 还能多剪什么。
+
+**verify skill 里的 skin-surface 小宿主已经过期**（那份 recipe 还写着
+`loadExtension` + `resources/desktop-style-extension`，是 v0.4.0 之前的路）。
+现在的验证宿主要这么搭：拿 `pnpm build:preload` 产出的
+`.vite/build/desktop-preload.js` 当 `webPreferences.preload`
+（`sandbox: true` / `contextIsolation: true`，和 `main-window.ts` 对齐），
+并在宿主的主进程里接住 `minke-fork:skin:read` / `minke-fork:skin:write`
+两个 channel——不接的话皮肤读不到选择，只会一直回落默认档，看起来像"没生效"。
+逐档验证时直接改 read 返回的值再 `loadURL`，比按快捷键可靠。
+顺带：harness 现在的 URL 带 `?token=`，宿主 `loadURL` 必须原样带上。
 
 ## 5. 现有 fork 功能
 
