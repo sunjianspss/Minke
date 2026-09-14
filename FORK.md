@@ -432,15 +432,16 @@ Homebrew node 上恒失败的 prune 用例，见 `.claude/skills/verify`）、�
 文件数还很宽裕，字节数只剩 4 MiB 余量（v0.3.0 时是 127.4 MiB）。
 下次 harness bump 如果再涨，得先看 `runtime-prune.mjs` 还能多剪什么。
 
-**verify skill 里的 skin-surface 小宿主已经过期**（那份 recipe 还写着
-`loadExtension` + `resources/desktop-style-extension`，是 v0.4.0 之前的路）。
-现在的验证宿主要这么搭：拿 `pnpm build:preload` 产出的
-`.vite/build/desktop-preload.js` 当 `webPreferences.preload`
-（`sandbox: true` / `contextIsolation: true`，和 `main-window.ts` 对齐），
-并在宿主的主进程里接住 `minke-fork:skin:read` / `minke-fork:skin:write`
-两个 channel——不接的话皮肤读不到选择，只会一直回落默认档，看起来像"没生效"。
-逐档验证时直接改 read 返回的值再 `loadURL`，比按快捷键可靠。
-顺带：harness 现在的 URL 带 `?token=`，宿主 `loadURL` 必须原样带上。
+**verify skill 里的 skin-surface 小宿主过期了一整个版本**——那份 recipe 还写着
+`loadExtension` + `resources/desktop-style-extension`，是 v0.4.0 之前的路。
+这次一并改掉了，宿主现在要提供两样东西：`pnpm build:preload` 产出的
+`.vite/build/desktop-preload.js` 当 `webPreferences.preload`（`sandbox: true`
+/ `contextIsolation: true`，和 `main-window.ts` 对齐），以及主进程里接住
+`minke-fork:skin:read` / `minke-fork:skin:write` 两个 channel。**第二样最容易
+漏**：不接的话 preload 那次 invoke 直接 reject，皮肤一律回落默认档，四个档
+看起来全是 photo——像极了"皮肤坏了"。逐档验证时改 read 返回的值再 `loadURL`
+一次，别去写页面的 `localStorage`（那只是桥不在时的兜底）。顺带：harness 现在
+的 URL 带 `?token=`，宿主 `loadURL` 必须原样带上。
 
 ## 5. 现有 fork 功能
 

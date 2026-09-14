@@ -18,9 +18,10 @@ FORK.md 第 3 节讲的是分层验证的思路和命令，那边是正的，先
    `app.getPath("home")` 走 NSHomeDirectory 而不是 `$HOME`。
    → 要么让用户退掉已装的 app，要么用下面的 skin-surface 小宿主。
 
-2. **Chrome 151+ 的 `--load-extension` 已失效**，静默不加载（
-   `Preferences` 里 `extensions.settings` 为空）。用 Chrome 验证皮肤扩展
-   得到的一律是假阴性。用 Electron 的 `loadExtension` 才是真路径。
+2. **皮肤早就不是扩展了**（v0.4.0 起走 preload 注入，见 FORK.md 第 2 节）。
+   任何"加载扩展再看皮肤"的做法——Chrome 的 `--load-extension`（151+ 已静默
+   失效）、Electron 的 `loadExtension`——验的都是一条死路径，结论一律无效。
+   真路径是下面那个 preload 小宿主。
 
 3. **Minke 吞掉 harness 的 stdout**（`desktop/main/harness-runtime.ts`
    只在非预期退出时才吐缓冲区）。`ctx.logger` 在真 app 里看不见。
@@ -87,15 +88,36 @@ PATH="$R/bin:$PATH" \
 
 ## 皮肤：Electron skin-surface 小宿主
 
-不碰用户已装的 app，也绕开 single-instance lock。放任意目录：
+不碰用户已装的 app，也绕开 single-instance lock。放任意目录。
+
+**宿主要提供两样东西，缺一样皮肤就是"看起来没生效"：**
+
+1. `webPreferences.preload` 指向构建产物 `.vite/build/desktop-preload.js`
+   （先 `pnpm build:preload`）——皮肤的 CSS/JS 由它注入，没有它页面上什么都没有。
+2. 主进程接住 `minke-fork:skin:read` / `minke-fork:skin:write`
+   （`desktop/minke-skin-channels.ts`）。preload 先读一次 read 拿初值再注入；
+   **没人接的话 invoke 直接 reject，皮肤回落默认档**——四个档看起来全是 photo。
 
 ```js
 // main.js，配一个 {"main":"main.js"} 的 package.json
-const { app, BrowserWindow, session } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
+
+let stored = "photo";                       // 逐档验证时改它，再 loadURL 一次
+const saves = [];                           // 看快捷键有没有真的写回主进程
+ipcMain.handle("minke-fork:skin:read", () => stored);
+ipcMain.handle("minke-fork:skin:write", (_e, choice) => { saves.push(choice); stored = choice; });
+
 app.whenReady().then(async () => {
-  await session.defaultSession.extensions.loadExtension(process.env.SKIN_EXT);
-  const win = new BrowserWindow({ width: 1440, height: 900 });
-  await win.loadURL(process.env.SKIN_URL);   // 上面那个 harness URL
+  const win = new BrowserWindow({
+    width: 1440, height: 900,
+    webPreferences: {                        // 和 desktop/main/main-window.ts 对齐
+      preload: process.env.SKIN_PRELOAD,
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      webSecurity: true, webviewTag: true,
+      transparent: process.platform === "darwin",
+    },
+  });
+  await win.loadURL(process.env.SKIN_URL);   // 上面那个 harness URL，**带上 ?token=**
   // win.webContents.executeJavaScript(...) 读计算样式
   // win.webContents.capturePage() 拿真实渲染帧，比外部截图可靠
   // win.webContents.sendInputEvent({type:"keyDown",keyCode:"K",
@@ -104,9 +126,14 @@ app.whenReady().then(async () => {
 ```
 
 ```sh
-SKIN_EXT=$PWD/resources/desktop-style-extension SKIN_URL=http://127.0.0.1:<port> \
+SKIN_PRELOAD=$PWD/.vite/build/desktop-preload.js \
+SKIN_URL='http://127.0.0.1:<port>/?token=<token>' \
   node_modules/.bin/electron /path/to/that/dir
 ```
+
+宿主没注册上游那一堆 `minke:*` handler，控制台会刷
+`No handler registered for 'minke:…'`——**那是宿主简陋，不是改动坏了**，
+皮肤和布局照常渲染。
 
 **两个查 DOM 时会骗你的地方：**
 
@@ -114,7 +141,7 @@ SKIN_EXT=$PWD/resources/desktop-style-extension SKIN_URL=http://127.0.0.1:<port>
   `[data-slot=...]` 包装层，滤掉之后你数出来的层级会少一层，写出来的
   `> * > *` 就永远匹配不中。要么全打印，要么直接从
   `elementFromPoint` 往上 walk 完整祖先链。
-- **content script 注入的样式表不出现在 `document.styleSheets` 里。**
+- **`webFrame.insertCSS` 注入的样式表不出现在 `document.styleSheets` 里。**
   拿 `[...document.styleSheets].some(s => [...s.cssRules]...)` 去查
   skin.css 在不在，永远返回 false，跟它有没有生效毫无关系。
   要判断有没有生效，去读目标元素的**计算样式**。
@@ -142,5 +169,9 @@ const shot = await win.capturePage();   // 这张才作数
 ```
 
 顺带：验证多档主题时**别依赖快捷键的循环顺序**去推当前是哪一档，
-直接逐档写 `localStorage` + `dataset.minkeSkin` 设定，再各自收帧。
-快捷键本身的循环行为用计算样式单独验一遍就够了。
+直接逐档改上面那个 `stored` 再 `loadURL` 一次，各自收帧。
+**别去写页面的 `localStorage`**——那只是桥不在时的兜底，初值以主进程
+read 回来的那份为准（`resources/minke-skin/skin.js` 的 `initialChoice`），
+写了也会被盖掉。快捷键本身的循环行为单独验一遍：按一次，读
+`dataset.minkeSkin` 加看主进程收到的 save，两边对上就够了（注意 `auto`
+会解析成当天轮到的那个视觉档，dataset 里看到的不是 `auto`）。
