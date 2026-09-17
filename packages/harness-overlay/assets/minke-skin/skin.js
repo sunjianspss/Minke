@@ -8,15 +8,15 @@
  * auto 按日期在四个视觉主题之间轮换。
  * 快捷键：Alt+Shift+K 依次切换。
  *
- * 分发：由 desktop/preload/minke-skin.ts 用 webFrame.executeJavaScript 注入到
- * 页面的 main world。
+ * 分发：由 fork 的 host 插件（packages/harness-overlay/src/fork/skin）通过上游的
+ * `webserver/index-inject` 缝，作为一行 script 注入 index.html。
  *
  * **选择不存在页面里。** 主窗口的 session 是内存态（`minke-main-window` 没有
  * `persist:` 前缀），localStorage 关掉 app 就没了；而且 harness 每次都用随机
- * 端口，origin 跟着变。所以初值由注入方写进 globalThis.__minkeSkinChoice，
- * 回写走 globalThis.__minkeSkinStore.save()（contextBridge 递过来的），
- * 两者都由主进程的 minke-skin-store.ts 落盘。localStorage 只剩兜底：
- * 桥不在时（测试沙箱、别的宿主）本次会话仍然记得住。
+ * 端口，origin 跟着变。所以初值由 host 插件写进 globalThis.__minkeSkinChoice，
+ * 回写 POST 到同源的 /api/minke-skin，由 host 存进 Harness 的用户设置文档
+ * （和 ui-theme 存 light/dark 是同一份文件）。localStorage 只剩兜底：
+ * 写回失败时（没鉴权、别的宿主）本次会话仍然记得住。
  *
  * 背景图的 data: URI 由注入方先写进 globalThis.__minkeSkinBackgrounds。
  * 这里不认识文件路径：v0.4.0 之前走的是 chrome.runtime.getURL()，扩展没了之后
@@ -66,10 +66,16 @@
   function writeChoice(choice) {
     current = choice;
     try {
-      // 跨重启的那一份。桥不在就当没有，本次会话照样切得动。
-      globalThis.__minkeSkinStore?.save(choice);
+      // 跨重启的那一份：同源 POST，鉴权用页面已经持有的那份凭据。
+      // 失败了只影响持久化，本次会话照样切得动，所以既不 await 也不报错。
+      void fetch("/api/minke-skin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ choice }),
+      }).catch(() => {});
     } catch {
-      /* 主进程没接住只影响持久化 */
+      /* fetch 本身不可用（老宿主 / 测试沙箱）只影响持久化 */
     }
     try {
       localStorage.setItem(STORAGE_KEY, choice);

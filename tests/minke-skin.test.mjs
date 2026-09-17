@@ -13,25 +13,25 @@ const appSource = read("desktop/renderer/App.tsx");
 const indexHtml = read("desktop/renderer/index.html");
 const rendererStyles = read("desktop/renderer/styles.css");
 const rendererSkin = read("desktop/renderer/skin.css");
-const extensionSkin = read("resources/minke-skin/skin.css");
-const skinScript = read("resources/minke-skin/skin.js");
-const skinPreload = read("desktop/preload/minke-skin.ts");
-const desktopPreload = read("desktop/preload/desktop-preload.ts");
-const desktopMain = read("desktop/main/main.ts");
-const skinStore = read("desktop/main/minke-skin-store.ts");
-const skinChannels = read("desktop/minke-skin-channels.ts");
+const SKIN_ASSET_DIR = "packages/harness-overlay/assets/minke-skin";
+const extensionSkin = read(`${SKIN_ASSET_DIR}/skin.css`);
+const skinScript = read(`${SKIN_ASSET_DIR}/skin.js`);
+// 皮肤整体从 Electron 侧搬到了 harness 的 host 插件，这三份是它现在的全部实现。
+const skinPlugin = read("packages/harness-overlay/src/fork/skin/index.ts");
+const skinAssets = read("packages/harness-overlay/src/fork/skin/assets.ts");
+const forkEntry = read("packages/harness-overlay/src/fork/index.ts");
 
 /**
  * 在隔离沙箱里跑一遍 skin.js，拿到它对页面做的全部动作。
  *
- * `injected` 是注入方（preload）写进去的初值，`bridged` 决定桥在不在——
- * 桥就是主进程那条持久化通道，缺了它 skin.js 必须还能跑。
+ * `injected` 是 host 插件经 index-inject 写进去的初值，`bridged` 决定写回路径
+ * 在不在——它现在是同源的 POST /api/minke-skin，缺了它 skin.js 必须还能跑。
  */
 function runSkinScript({ stored, injected, bridged = true } = {}) {
   const declarations = [];
   const listeners = [];
   const appended = [];
-  const saved = [];
+  const posted = [];
   const store = new Map(stored === undefined ? [] : [["minke.skin", stored]]);
   const documentElement = {
     dataset: {},
@@ -45,14 +45,12 @@ function runSkinScript({ stored, injected, bridged = true } = {}) {
   // 值是构建期内联的 data: URI。这里用可辨认的假值，只验映射关系。
   const sandbox = {
     __minkeSkinChoice: injected,
-    // contextBridge 递进 main world 的那个对象。桥不在时整个键都不存在，
-    // skin.js 里的 ?. 必须自己扛住。
+    // 回写用的 fetch。不可用时（别的宿主、被策略挡掉）skin.js 必须自己扛住。
     ...(bridged
       ? {
-        __minkeSkinStore: {
-          save(choice) {
-            saved.push(choice);
-          },
+        fetch(url, init) {
+          posted.push({ url, ...JSON.parse(init.body) });
+          return Promise.resolve({ status: 204 });
         },
       }
       : {}),
@@ -88,7 +86,7 @@ function runSkinScript({ stored, injected, bridged = true } = {}) {
     documentElement,
     listeners,
     sandbox,
-    saved,
+    posted,
     store,
   };
 }
@@ -121,7 +119,7 @@ test("the shipped background stays where the preload globs it", () => {
   assert.ok(
     existsSync(
       new URL(
-        `../resources/minke-skin/${SHIPPED_BACKGROUND}`,
+        `../${SKIN_ASSET_DIR}/${SHIPPED_BACKGROUND}`,
         import.meta.url,
       ),
     ),
@@ -134,58 +132,67 @@ test("the private backgrounds never reach the public history", () => {
   const gitignore = read(".gitignore");
   for (const file of LOCAL_BACKGROUNDS) {
     assert.ok(
-      gitignore.includes(`resources/minke-skin/${file}`),
+      gitignore.includes(`${SKIN_ASSET_DIR}/${file}`),
       `${file} 没被忽略，会跟着推进公开仓库`,
     );
   }
 });
 
-test("the skin hooks into upstream files with a single line each", () => {
+test("the skin no longer touches any upstream desktop file", () => {
+  // 皮肤整体搬到了 harness 的 host 插件，Electron 那一侧一行不剩。
+  // v0.4.0 上游把主窗口搬进内存态 session 时，preload 那条注入路径被连根拔掉过
+  // 一次；不再依赖它，那一类事故就不会重演。
+  for (const file of [
+    "desktop/preload/desktop-preload.ts",
+    "desktop/main/main.ts",
+  ]) {
+    assert.doesNotMatch(
+      read(file),
+      /minke-?[Ss]kin/u,
+      `${file} 里还有皮肤的痕迹，B 面对上游的 diff 应该是零`,
+    );
+  }
+  for (const gone of [
+    "desktop/preload/minke-skin.ts",
+    "desktop/main/minke-skin-store.ts",
+    "desktop/minke-skin-channels.ts",
+  ]) {
+    assert.ok(
+      !existsSync(new URL(`../${gone}`, import.meta.url)),
+      `${gone} 该随 preload 那条路一起退役`,
+    );
+  }
+
+  // 只剩 A 面：Minke 自己的 bootstrap 页，那是 fork 的地盘，一行 @import。
   assert.match(rendererStyles, /@import "\.\/skin\.css";/);
-  // 上游 preload 里只有两行 fork 代码：一个 import，一个调用。
-  assert.match(desktopPreload, /import \{ installMinkeSkin \} from "\.\/minke-skin\.ts";/u);
-  assert.match(
-    desktopPreload,
-    /webFrame\.insertCSS\(macOSSurfaceCss\);[\s\S]{0,200}?installMinkeSkin\(\);/u,
-    "皮肤必须排在 early.css 之后注入，否则覆盖不掉它的底色",
-  );
-  // main.ts 同样只有两行：一个 import，一个调用，且调用必须在正常启动那条
-  // 分支里——凭据助手子进程没有窗口，不该也装这两个 handler。
-  // （上游 tests/module-boundaries.test.mjs 原本精确断言 entry 的 import 清单，
-  //  已按 FORK.md 第 2 节第 3 条松成子集断言，精确的那份就是这里。）
-  assert.match(
-    desktopMain,
-    /import \{ installMinkeSkinStore \} from "\.\/minke-skin-store\.ts";/u,
-  );
-  assert.match(
-    desktopMain,
-    /runDesktopApplication\(\);[\s\S]{0,200}?installMinkeSkinStore\(\);/u,
-    "皮肤存储的通道没装上，选择就跨不过重启",
-  );
+
+  // fork 入口挂上它，一行。
+  assert.match(forkEntry, /applySkin\(ctx\)/u);
 });
 
-test("the skin rides the preload injection path, not the dead extension", () => {
-  // v0.4.0 上游把主窗口搬到内存态 session，Electron 不允许往内存态 session
-  // 加载扩展（Extensions cannot be loaded in a temporary session），所以
-  // content_scripts 那条路是结构上走不通的，不是"忘了接"。
-  assert.match(skinPreload, /webFrame\.insertCSS\(skinCss\)/u);
-  assert.match(
-    skinPreload,
-    /webFrame\.executeJavaScript\(/u,
-    "skin.js 要进页面的 main world，preload 的 isolated world 读不到对的 localStorage",
+test("the skin rides upstream's index-inject seam", () => {
+  // 四行注入：两个 global（初值、背景图）+ 样式 + 脚本。global 必须排在
+  // script 前面，否则脚本执行时读不到初值，第一帧是默认档然后跳一下。
+  const handler = skinPlugin.match(
+    /webserver\/index-inject[\s\S]*?\n {4}\}\);/u,
   );
-  assert.match(
-    skinPreload,
-    /import\.meta\.glob<string>\(\s*"\.\.\/\.\.\/resources\/minke-skin\/minke-background\*\.jpeg",\s*\{ eager: true, query: "\?inline"/u,
-    "私人配图可能不存在，必须用 glob 而不是静态 import，否则 clone 下来构建就炸",
+  assert.ok(handler, "皮肤不再往 index-inject 推注入行了？");
+  const kinds = [...handler[0].matchAll(/kind: "(\w+)"/gu)].map(([, k]) => k);
+  assert.deepEqual(
+    kinds,
+    ["global", "global", "style", "script"],
+    "顺序错了：两个 global 必须落在 script 之前",
   );
-  // skin.js 不再依赖 chrome 这件事，由 runSkinScript 的沙箱直接证明：
-  // 那里面**没有 chrome 这个全局**，脚本照样跑完并写出三个变量。行为断言比
-  // 在源码里 grep "getURL" 强——后者会被注释里的历史说明骗到。
+
+  // 初值每次渲染 index 时现读，而不是启动时读一次——否则切换完刷新还是旧档。
+  assert.match(handler[0], /currentChoice\(\)/u);
+
+  // skin.js 不依赖 chrome，也不依赖任何 Electron 全局：沙箱里没有它们，
+  // 脚本照样跑完并写出三个背景变量。行为断言比在源码里 grep 强。
   assert.deepEqual(
     Object.keys(runSkinScript().declarations).length,
     3,
-    "没有 chrome 的环境里 skin.js 必须仍能写出全部背景变量",
+    "没有 chrome / Electron 的环境里 skin.js 必须仍能写出全部背景变量",
   );
 });
 
@@ -268,11 +275,11 @@ test("every Harness background reaches the page as an inlined data URI", () => {
       new RegExp(`var\\(${property}(?:,\\s*none)?\\)`, "u"),
       `${property} 声明了却没人用，图片白内联进 preload`,
     );
-    // 注入方那张表要盖住 skin.css 用到的每一个变量。
+    // host 侧那张表要盖住 skin.css 用到的每一个变量。
     assert.match(
-      skinPreload,
+      skinAssets,
       new RegExp(`"${property}"`, "u"),
-      `${property} 在 minke-skin.ts 的 BACKGROUND_PROPERTIES 里没有对应文件`,
+      `${property} 在 fork/skin/assets.ts 的 BACKGROUNDS 里没有对应文件`,
     );
   }
   assert.doesNotMatch(
@@ -280,9 +287,9 @@ test("every Harness background reaches the page as an inlined data URI", () => {
     /url\(["']?\.?\.?\/?minke-background/u,
     "相对 URL 会解析到 Harness 的 HTTP origin，图片只能由 skin.js 写 data: URI",
   );
-  // 三个变量、三个文件名，minke-skin.ts 里必须一一对得上。
+  // 三个变量、三个文件名，assets.ts 里必须一一对得上。
   for (const file of BACKGROUND_FILES) {
-    assert.match(skinPreload, new RegExp(`"${file}"`, "u"), `${file} 没被映射`);
+    assert.match(skinAssets, new RegExp(`"${file}"`, "u"), `${file} 没被映射`);
   }
 });
 
@@ -334,10 +341,10 @@ test("auto rotates the visual skins by day and never yields off", () => {
   );
 });
 
-test("the choice outlives the window through the main process", () => {
+test("the choice outlives the window through the Host settings document", () => {
   // 页面侧存不住：主窗口的 session 没有 persist: 前缀（内存态，上游用它推迟
   // Keychain 初始化），localStorage 关掉 app 就没了；harness 每次还换随机端口，
-  // origin 跟着变。所以初值必须由注入方给，回写必须走桥。
+  // origin 跟着变。所以初值必须由 host 注入，回写必须发出去。
   assert.equal(
     runSkinScript({ injected: "mono", stored: "paper" })
       .documentElement.dataset.minkeSkin,
@@ -345,46 +352,50 @@ test("the choice outlives the window through the main process", () => {
     "注入方给了初值就以它为准，页面存储只是兜底",
   );
 
-  const { listeners, saved, store } = runSkinScript({ injected: "off" });
+  const { listeners, posted, store } = runSkinScript({ injected: "off" });
   pressSkinShortcut(listeners);
-  assert.deepEqual(saved, ["auto"], "切换必须回写到主进程那一份");
+  assert.deepEqual(
+    posted,
+    [{ url: "/api/minke-skin", choice: "auto" }],
+    "切换必须 POST 回 host，否则选择活不过重启",
+  );
   assert.equal(store.get("minke.skin"), "auto", "本次会话的兜底也要跟着写");
 
-  // 桥不在（测试宿主、非 macOS、handler 没装上）时不能炸，退回页面存储即可。
+  // 写回路径不可用（别的宿主、fetch 被挡）时不能炸，退回页面存储即可。
   const withoutBridge = runSkinScript({ stored: "paper", bridged: false });
   assert.equal(withoutBridge.documentElement.dataset.minkeSkin, "paper");
   pressSkinShortcut(withoutBridge.listeners);
   assert.equal(withoutBridge.store.get("minke.skin"), "mono");
-  assert.deepEqual(withoutBridge.saved, []);
+  assert.deepEqual(withoutBridge.posted, []);
 });
 
-test("both sides of the skin bridge agree on the same channels", () => {
+test("the host plugin and skin.js agree on the same choices and route", () => {
   const { sandbox } = runSkinScript();
+  // host 侧那份白名单是落盘前的最后一道闸：它和 skin.js 的 CHOICES 对不上，
+  // 就会出现"切得动但存不下"——页面显示新档，写回被 400 挡掉，刷新退回旧档。
   const declared = [
-    ...skinChannels.matchAll(/^\s{2}"([a-z]+)",$/gmu),
+    ...skinPlugin.matchAll(/^\s{2}"([a-z]+)",$/gmu),
   ].map(([, choice]) => choice);
   assert.deepEqual(
     declared,
     Array.from(sandbox.__minkeSkin.CHOICES),
-    "主进程的白名单和 skin.js 的 CHOICES 必须逐项一致，否则存得进读不出",
+    "SKIN_CHOICES 和 skin.js 的 CHOICES 必须逐项一致，否则存得进读不出",
   );
 
-  // 通道名两侧共用同一个常量文件，preload 不许自己写字符串字面量。
-  assert.match(
-    skinPreload,
-    /ipcRenderer\.invoke\(MINKE_SKIN_READ_CHANNEL\)/u,
-    "注入前必须先取一次初值",
-  );
-  assert.match(
-    skinPreload,
-    /contextBridge\.exposeInMainWorld\(\s*"__minkeSkinStore"/u,
-    "main world 够不到 ipcRenderer，回写只能靠 contextBridge 递过去",
-  );
-  assert.match(
-    skinStore,
-    /join\(\s*app\.getPath\("userData"\),\s*"desktop",/u,
-    "选择要落在 userData 里，别写进随时会被清掉的地方",
-  );
+  // 路由两侧共用同一个字符串。写全路径这件事错过一次：只写下半截能注册成功，
+  // 查表却用完整 pathname，表现是稳定的 404。
+  assert.match(skinPlugin, /SKIN_WRITE_ROUTE = "\/api\/minke-skin"/u);
+  assert.match(skinPlugin, /path: SKIN_WRITE_ROUTE/u);
+  assert.match(skinScript, /fetch\("\/api\/minke-skin"/u);
+
+  // 绘制和写回必须是两个 inject。绑在一起时 connection 缺席会让整块回调都不跑，
+  // 表现是皮肤整个消失，而不是"切换存不下来"。踩过一次。
+  assert.match(skinPlugin, /ctx\.inject\(\["webServer"\]/u);
+  assert.match(skinPlugin, /ctx\.inject\(\["connection"\]/u);
+
+  // 设置命名空间就是落盘的位置，和 ui-theme 同一份文档。
+  assert.match(skinPlugin, /SKIN_SETTINGS_NAMESPACE = "minke-skin"/u);
+  assert.match(skinPlugin, /settings\.register\(/u);
 });
 
 test("the shortcut cycles the choice and persists it", () => {

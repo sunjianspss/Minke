@@ -7,10 +7,12 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import { applyMcpServers } from "./mcp-servers";
+import { applySkin } from "./skin";
 
 export const name = "minke-fork";
 export const inject = ["tools"];
 
 export async function apply(ctx: Context): Promise<void> {
   await applyMcpServers(ctx);
+  await applySkin(ctx);
 }

@@ -25,6 +25,12 @@
     },
     {
       "path": "../../vendor/deepseek-harness/packages/util/home-paths"
+    },
+    {
+      "path": "../../vendor/deepseek-harness/packages/host/webserver"
+    },
+    {
+      "path": "../../vendor/deepseek-harness/packages/settings/settings"
     }
   ]
 }

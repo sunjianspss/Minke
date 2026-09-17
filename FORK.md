@@ -17,11 +17,21 @@
 | 层 | 位置 | 改动上游文件 | 适合做什么 |
 |---|---|---|---|
 | L0 运行时 | `~/.minke/harness/`（`DSH_HOME`） | 无 | skills、MCP server 列表、任何用户态配置 |
-| L1 注入层 | `resources/minke-skin/` + `desktop/preload/minke-skin.ts` | preload 里两行 | 皮肤、页面级 CSS/JS |
+| ~~L1 注入层~~ | ~~preload 注入~~ | — | **已退役**，见下方 |
 | L2 组合层 | `packages/harness-overlay/cordis.patch.yml` | 末尾追加块 | 打开 harness 里现成但没组合的插件 |
 | L3 自研层 | `packages/harness-overlay/src/fork/**` | 无（入口已经接好） | 自己写的 host 插件、工具、服务 |
 
-**能用 L0 就别用 L1，能用 L3 就别再往 L2 加行。** L2 已经 insert 了 fork 的唯一入口
+**L1 已经没有了。** 皮肤曾经是这一层唯一的住户：`resources/minke-skin/` 的资源由
+`desktop/preload/minke-skin.ts` 用 `webFrame.insertCSS` / `executeJavaScript` 注进
+页面，再自建一对 IPC 通道落盘选择，代价是上游 `desktop-preload.ts` 和 `main.ts`
+各两行。v0.4.0 上游把主窗口搬进内存态 session 时，这条注入路径被连根拔掉过一次。
+
+现在它整体搬进 L3（`src/fork/skin/**`），走上游自己声明的缝：
+`webserver/index-inject` 推样式和脚本，`settings.register` 存选择，
+`connection.fetch.register` 收写回。**fork 对 `desktop/**` 的 diff 归零。**
+再有"页面级 CSS/JS"的需求，照这个路子写 host 插件，别再往 preload 里加行。
+
+**能用 L0 就别用 L3，能用 L3 就别再往 L2 加行。** L2 已经 insert 了 fork 的唯一入口
 `@lencx/minke-harness-overlay/fork`，以后新增功能一律在 `src/fork/**` 里用
 `ctx.plugin()` 自己挂，组合层不再增行。
 
@@ -57,11 +67,14 @@
   （见下面那条「断言棘轮」）
 - `tests/harness-overlay.test.mjs` — `runtimePackages` 的 deepEqual 换成 fork 自己的清单
   （上游 v0.2.0 起断言它是空的）
-- `desktop/preload/desktop-preload.ts` — 两行：`import { installMinkeSkin }` 和
-  紧跟 `webFrame.insertCSS(macOSSurfaceCss)` 的那次调用（v0.4.0 起）
-- `desktop/main/main.ts` — 两行：`import { installMinkeSkinStore }` 和
-  `runDesktopApplication()` 之后的那次调用（皮肤选择的持久化，见第 5 节）
-- `desktop/renderer/styles.css` — 一行 `@import "./skin.css"`
+- `desktop/renderer/styles.css` — 一行 `@import "./skin.css"`（只是 Minke 自己的
+  bootstrap 页，和 harness 页面上的皮肤是两回事）
+- `package.json` — 还有 `test:skin:surface` 脚本
+- `packages/harness-overlay/tsconfig.fork.json` — fork 自有文件，`references` 里
+  多了 webserver / settings 两个工程（皮肤插件要它们的类型）
+
+`desktop/preload/desktop-preload.ts` 和 `desktop/main/main.ts` **不再是被改的上游
+文件**：皮肤搬进 host 插件后，那四行全部退役，两个文件现在和上游逐字一致。
 - `.gitignore` — 忽略 `.claude/settings.local.json`；忽略 aurora / mono 两档的私人配图
 
 `tests/web-search.test.mjs` 不再是被改的上游文件：上游 v0.4.0 把它从「boot 整棵
@@ -279,6 +292,12 @@ pnpm test:skin:surface
 | 2026-09-14 | `458980e → ffb0da8`（v0.6.1，23 个提交） | `0.1.3-alpha.1 → 0.1.5-rc.2` | 1 处冲突，boot 名单再补两项 |
 | 2026-09-17 | `ffb0da8 → bdb6a7a`（v0.7.0，13 个提交） | `0.1.5-rc.2 → 0.1.6-alpha.1` | rebase 零冲突，修好早已失效的两个皮肤锚点 |
 
+同步之后顺着做了两件事：皮肤的逐帧确认变成 `pnpm test:skin:surface`
+（第 3 节第 3.5 层），以及**皮肤整体从 preload 搬进 host 插件**——
+`webserver/index-inject` + `settings.register` + `connection.fetch.register`
+三条上游自有的缝，`desktop/**` 对上游的 diff 归零，L1 那一层就此退役。
+细节和四个踩过的坑见第 5 节「皮肤（L3）」。
+
 #### 2026-09-17：v0.7.0 —— 顺序反了，以及皮肤锚点的无声失效
 
 rebase 29 个提交零冲突。上游碰了 fork 改过的三个文件，但全在头部（版本号、
@@ -430,6 +449,12 @@ session**，Electron 不允许往里加载扩展。而这个「内存态」恰�
 `resources/minke-skin/`：扩展已经不存在，继续放在那个目录里是误导，而且挪走之后
 **上游那个目录恢复成和上游逐字一致**（只剩 `early.css`）。被改的上游文件也从
 一开始设想的 4 个减到 1 个（`desktop-preload.ts`，两行）。
+
+> **这一整段后来整个作废。** 皮肤在 v0.7.0 那次搬进了 host 插件，
+> `resources/minke-skin/` 也跟着挪进
+> `packages/harness-overlay/assets/minke-skin/`（要跟着包进 `runtime/host`），
+> preload 那两行退役，`desktop-preload.ts` 恢复成和上游逐字一致。
+> 留着这段是因为「为什么不是扩展」那个结论仍然有效。
 
 这三处新缝全部锁进了 `tests/minke-skin.test.mjs` 的
 `the extension delivery path the skin rides on stays wired`：加载点、根目录解析、
@@ -631,24 +656,46 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 > `productBundle.runtimePackages` 这一个机制，拆开反而更碎。代价是上游那条
 > 断言被 fork 缩了作用域（只作用于围栏之外）。
 
-### 皮肤（L1）
+### 皮肤（L3）
 
-`resources/minke-skin/` 放素材（`skin.css` / `skin.js` / 三张图），
-`desktop/preload/minke-skin.ts` 负责注入，`desktop/renderer/skin.css` 管 Electron
-启动窗口。
+素材在 `packages/harness-overlay/assets/minke-skin/`（`skin.css` / `skin.js` /
+三张图），实现在 `packages/harness-overlay/src/fork/skin/`，
+`desktop/renderer/skin.css` 另管 Electron 自己的启动窗口（那是另一个面）。
 
-**注入路径（v0.4.0 起）。** 上游 preload 里两行 fork 代码，紧跟它自己的
-`webFrame.insertCSS(macOSSurfaceCss)`：CSS 走 `insertCSS`，JS 走
-`executeJavaScript` 进页面 main world。**扩展那条路已经死了**——上游把主窗口搬到
-内存态 session，Electron 不允许往内存态 session 加载扩展。别再试，原委见第 4 节
-v0.4.0 那条。
+**它对上游 `desktop/**` 零改动。** 三条缝都是上游自己声明、自己也在用的：
+
+| 干什么 | 走哪条缝 | 上游谁在用 |
+|---|---|---|
+| 把样式、脚本、初值、背景图送进页面 | `ctx.on("webserver/index-inject")` | `ui-theme`、`connection`、`modules`、`inspector` |
+| 存选择 | `ctx.settings.register("minke-skin", schema)` | `ui-theme` 存 light/dark 用的同一份文档 |
+| 收页面的写回 | `ctx.connection.fetch.register` → `POST /api/minke-skin` | `file-upload`、`session-log-export`、`session-controller` |
+
+素材跟着 overlay 包的 `files: ["lib", "assets", …]` 进 `runtime/host`，host 插件在
+运行时读；背景图读成 data: URI 直接塞进注入行，不走 HTTP——多一次往返首帧就会闪。
+aurora / mono 是私人配图（在 `.gitignore` 里），读不到就跳过，那两档退化成纯底色。
 
 可选 `photo`（默认）、`aurora`、`paper`、`mono`、`off`、`auto`（按日期在四个视觉
 主题间轮换）。**Alt+Shift+K 依次切换。**
 
-**选择存在主进程，不存在页面里。** 一开始它在 `localStorage["minke.skin"]`，
-表现是切换当场生效、重启回到默认档——两条独立原因各自都足以让页面侧的存储
-活不过一次重启：
+**四个踩过的坑，改这块前先看：**
+
+1. **`connection.fetch.register` 的 `path` 要写全路径，连 `/api` 一起。** 契约里
+   那句「Absolute path below `/api`」容易读成只填下半截；注册表用 `route.path`
+   原样做键，查表却用请求的完整 pathname——只写 `/minke-skin` 能注册成功、永远
+   查不到，表现是稳定的 404。
+2. **绘制和写回要分成两个 `ctx.inject`。** 合在
+   `ctx.inject(["webServer", "connection"])` 里时，connection 缺席会让整块回调都不
+   执行，表现是**皮肤整个消失**（一条注入行都没推），而不是"切换存不下来"。
+3. **别退回 `ctx.webServer.register` 自己拼裸路由。** 那样既要自己调
+   `connection.requestRejection`，又要自己读请求流；实测 handler 进得到，但
+   `for await (const chunk of req)` 永远不结束，请求就挂在那儿。
+4. **皮肤压过 `early.css` 靠的是特异性，不是注入顺序。** early.css 由 preload 的
+   `webFrame.insertCSS` 注入，皮肤是 index.html 里的 `<style>`，谁先谁后不由我们
+   决定；同级 `!important` 比顺序，所以皮肤写 `html body`（0,0,2）稳赢
+   `html, body, #root`（0,0,1）。
+
+**选择存在 host，不存在页面里。** 两条独立原因各自都足以让页面侧的存储活不过一次
+重启：
 
 1. 主窗口跑在 `session.fromPartition("minke-main-window")` 上，**没有 `persist:`
    前缀就是内存态 session**，localStorage 关掉 app 就没了。这个内存态正是上游
@@ -657,28 +704,24 @@ v0.4.0 那条。
    origin 分区。`~/.minke/Local Storage/leveldb` 里能看到十几个
    `_http://127.0.0.1:<不同端口>` 各存一份。
 
-现在的路径：`desktop/main/minke-skin-store.ts` 用两个 IPC 通道读写
-`<userData>/desktop/minke-skin.json`（fork 自有文件，不并进上游的
-`MinkeConfigStore`——那要在 `minke-config.ts` 中间插四段）；`minke-skin.ts` 注入前
-先取一次初值写进 `globalThis.__minkeSkinChoice`，并用 `contextBridge` 递一个
-`__minkeSkinStore.save()` 给 main world 回写。通道名和合法值的白名单在
-`desktop/minke-skin-channels.ts`，两侧共用。`localStorage` 降级成兜底：桥不在时
-（测试沙箱、handler 没装上）本次会话仍然记得住。
+`localStorage` 降级成兜底：写回失败时（没鉴权、别的宿主）本次会话仍然记得住。
 
-**这条缝只有第 4 层验得到**：静态断言、隔离 harness 都看不出「重启后还在不在」。
-判据是切一档非默认的、真退出 app、再开——以及 `cat ~/.minke/desktop/minke-skin.json`。
+**整条链路由 `pnpm test:skin:surface` 覆盖**（第 3 节第 3.5 层）：它逐档走
+POST → 设置文档 → 下次 index 注入，所以"选择活不活得过重启"这件事不再只能靠
+第 4 层手验。
 
 配色全在 `skin.css`，`skin.js` 只负责解析选择并写到 `<html data-minke-skin>`。
 没有属性时走 photo，所以脚本执行前的第一帧就已经是最终样式，不会闪。
 
 `photo` / `aurora` / `mono` 各配一张图（`minke-background{,-aurora,-mono}.jpeg`），
-`paper` 仍是纯渐变。图片在**构建期被内联成 `data:` URI**，由 `minke-skin.ts` 的
-`BACKGROUND_PROPERTIES` 映射到 `--minke-background-image*` 变量，`skin.js` 只负责
-把拿到的 URI 写进 `documentElement.style`——它自己不认识文件名。相对路径和
-`file://` 都不行（前者解析到 Harness 的 HTTP origin，后者被跨协议拦掉）。
+`paper` 仍是纯渐变。图片由 host 插件在**运行时读成 `data:` URI**
+（`src/fork/skin/assets.ts` 的 `BACKGROUNDS` 表），经 index-inject 的 global 行
+送进页面；`skin.js` 只负责把拿到的 URI 写进 `documentElement.style`——它自己不认识
+文件名。相对路径和 `file://` 都不行（前者解析到 Harness 的 HTTP origin，后者被跨
+协议拦掉）。不走 HTTP 路由取图也是有意的：多一次往返，首帧就会闪一下白底。
 
-**加图要改两处**：把文件放进 `resources/minke-skin/`，并在 `minke-skin.ts` 的
-`BACKGROUND_PROPERTIES` 里加一行；glob 会自动把它内联进去。
+**加图要改两处**：把文件放进 `packages/harness-overlay/assets/minke-skin/`，并在
+`assets.ts` 的 `BACKGROUNDS` 里加一行。
 `tests/minke-skin.test.mjs` 把「变量、文件、映射」三者的一一对应锁住了。
 私人配图记得同时进 `.gitignore`。
 

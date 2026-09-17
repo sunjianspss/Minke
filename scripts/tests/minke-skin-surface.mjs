@@ -55,7 +55,7 @@ const progress = (message) => console.log(`· ${message}`);
  * 只取真正生效的规则：注释里也提到过 slot 名字，那些不该参与。
  */
 async function skinAnchors() {
-  const css = (await readFile(path("resources/minke-skin/skin.css"), "utf8"))
+  const css = (await readFile(path("packages/harness-overlay/assets/minke-skin/skin.css"), "utf8"))
     .replaceAll(/\/\*[\s\S]*?\*\//gu, "");
   const rule = /html:not\(\[data-minke-skin="off"\]\)[^{]*\{[^}]*\}/u.exec(css);
   if (rule === null) throw new Error("skin.css 里找不到打透明的规则");
@@ -181,6 +181,19 @@ function assertReport(report) {
       continue;
     }
 
+    // 写回路由：204 以外都说明那条 HTTP 缝断了（401/403 是鉴权，503 是
+    // settings 没组合进来，404 是路由没注册上）。不单独报的话，表现只是
+    // "所有档位都停在 photo"，查起来完全没有方向。
+    check(
+      report.writeStatus?.[choice] === 204,
+      `${choice}：POST /api/minke-skin 回了 ${report.writeStatus?.[choice]}，不是 204`,
+    );
+    // host 插件经 index-inject 写进来的初值。它不对说明注入缝断了。
+    check(
+      observed.injectedChoice === choice,
+      `${choice}：host 注入的初值是 ${observed.injectedChoice}`,
+    );
+
     check(
       observed.skin === choice,
       `${choice}：页面上的档位是 ${observed.skin}——`
@@ -262,16 +275,17 @@ function assertReport(report) {
     );
   }
 
-  // 快捷键：页面上的档位和主进程收到的写回必须是同一件事，
-  // 否则选择活不过重启（那正是它改走主进程的原因）。
+  // 快捷键：页面上的档位推进了，而且那次推进要真的落到 host 上——重载一次，
+  // 注入回来的初值必须已经是新档位。这一条整体走完 POST → 设置文档 →
+  // 下次 index-inject 的链路，是"选择活得过重启"的直接证据。
   const shortcut = report.shortcut ?? {};
   check(
     shortcut.before === "photo" && shortcut.after === "aurora",
     `快捷键没把档位从 photo 推到 aurora：${shortcut.before} → ${shortcut.after}`,
   );
   check(
-    shortcut.saves?.length === 1 && shortcut.saves[0] === "aurora",
-    `主进程没收到那次写回：${JSON.stringify(shortcut.saves)}`,
+    shortcut.persisted === "aurora",
+    `快捷键那次切换没落到 host 上：重载后注入回来的初值是 ${shortcut.persisted}`,
   );
 }
 
@@ -284,6 +298,13 @@ async function main() {
   for (const [label, target] of [
     ["runtime/host（先跑 pnpm harness:stage）", join(RUNTIME_HOST, "index.mjs")],
     ["preload 构建产物（先跑 pnpm build:preload）", PRELOAD],
+    [
+      "staged 的皮肤素材（先跑 pnpm build:product-packages && pnpm harness:stage）",
+      join(
+        RUNTIME_HOST,
+        "node_modules/@lencx/minke-harness-overlay/assets/minke-skin/skin.css",
+      ),
+    ],
   ]) {
     try {
       await readFile(target);

@@ -106,41 +106,28 @@ pnpm test:skin:surface     # 约 25 秒，5 档逐帧 + 探针 + 快捷键，红
 
 不碰用户已装的 app，也绕开 single-instance lock。放任意目录。
 
-**宿主要提供两样东西，缺一样皮肤就是"看起来没生效"：**
+**皮肤已经不由宿主提供了。** 样式、脚本、初值、背景图全部由 harness 的 host 插件
+经 `webserver/index-inject` 写进 index.html，切换 POST 回 `/api/minke-skin`。
+宿主只需要给一样东西：
 
-1. `webPreferences.preload` 指向构建产物 `.vite/build/desktop-preload.js`
-   （先 `pnpm build:preload`）——皮肤的 CSS/JS 由它注入，没有它页面上什么都没有。
-2. 主进程接住 `minke-fork:skin:read` / `minke-fork:skin:write`
-   （`desktop/minke-skin-channels.ts`）。preload 先读一次 read 拿初值再注入；
-   **没人接的话 invoke 直接 reject，皮肤回落默认档**——四个档看起来全是 photo。
+- `webPreferences.preload` 指向构建产物 `.vite/build/desktop-preload.js`
+  （先 `pnpm build:preload`）。**它注入的是上游的 early.css，不是皮肤**——皮肤要
+  靠特异性压过它，少了它就验不到这场较量。
+
+逐档验证不要去改宿主里的变量，直接走真实写回路径再刷新：
+
+```js
+await win.webContents.executeJavaScript(`
+  fetch("/api/minke-skin", { method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin", body: JSON.stringify({ choice: "mono" }) })
+    .then((r) => r.status)`);      // 204 以外都说明那条缝断了
+await win.loadURL(process.env.SKIN_URL);   // 初值在渲染 index 时现读
+```
 
 ```js
 // main.js，配一个 {"main":"main.js"} 的 package.json
-const { app, BrowserWindow, ipcMain } = require("electron");
-
-let stored = "photo";                       // 逐档验证时改它，再 loadURL 一次
-const saves = [];                           // 看快捷键有没有真的写回主进程
-ipcMain.handle("minke-fork:skin:read", () => stored);
-ipcMain.handle("minke-fork:skin:write", (_e, choice) => { saves.push(choice); stored = choice; });
-
-app.whenReady().then(async () => {
-  const win = new BrowserWindow({
-    width: 1440, height: 900,
-    webPreferences: {                        // 和 desktop/main/main-window.ts 对齐
-      preload: process.env.SKIN_PRELOAD,
-      contextIsolation: true, nodeIntegration: false, sandbox: true,
-      webSecurity: true, webviewTag: true,
-      transparent: process.platform === "darwin",
-    },
-  });
-  await win.loadURL(process.env.SKIN_URL);   // 上面那个 harness URL，**带上 ?token=**
-  // win.webContents.executeJavaScript(...) 读计算样式
-  // win.webContents.capturePage() 拿真实渲染帧，比外部截图可靠
-  // win.webContents.sendInputEvent({type:"keyDown",keyCode:"K",
-  //   modifiers:["alt","shift"]}) 触发皮肤快捷键
-});
-```
-
+const { app, BrowserWindow } = require("electron");
 ```sh
 SKIN_PRELOAD=$PWD/.vite/build/desktop-preload.js \
 SKIN_URL='http://127.0.0.1:<port>/?token=<token>' \
@@ -161,6 +148,10 @@ SKIN_URL='http://127.0.0.1:<port>/?token=<token>' \
   拿 `[...document.styleSheets].some(s => [...s.cssRules]...)` 去查
   skin.css 在不在，永远返回 false，跟它有没有生效毫无关系。
   要判断有没有生效，去读目标元素的**计算样式**。
+
+**别再依赖「主进程那份初值」那套说法。** 选择现在存在 Harness 的用户设置文档里
+（`DSH_HOME` 下，和 ui-theme 的 light/dark 同一份），不在 `<userData>/desktop/`，
+也不经过任何 IPC 通道。
 
 **别只看计算样式就下结论。** 皮肤画在 `body` 上（不是 `html`），
 上面任何一个不透明的 div 都会把它整个盖掉，而计算样式看起来完全正常。

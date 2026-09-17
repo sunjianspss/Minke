@@ -9,12 +9,13 @@
  * 只要 /Applications/Minke.app 在跑，dev 版就静默 app.quit() 且退出码 0——
  * 验证会"通过"而其实什么都没跑。详见 .claude/skills/verify。
  *
- * 宿主必须提供两样东西，缺一样皮肤就是"看起来没生效"：
- *   1. webPreferences.preload 指向构建产物，皮肤的 CSS/JS 由它注入；
- *   2. 主进程接住 minke-fork:skin:read / :write，preload 先 read 拿初值，
- *      没人接的话 invoke 直接 reject，所有档位一起回落默认值。
+ * 宿主只提供 preload（early.css 由它注入，皮肤要靠特异性压过它）。
+ * **皮肤本身跟这个宿主没关系**：样式、脚本、初值、背景图全部由 harness 的
+ * host 插件经 `webserver/index-inject` 写进 index.html，切换则 POST 回
+ * `/api/minke-skin`。所以这里不再有任何 minke-fork:skin:* 的 IPC handler——
+ * 从 Electron 那一侧完全撤出，正是这次改造要验的事。
  */
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow } = require("electron");
 const { writeFileSync } = require("node:fs");
 
 const CHOICES = ["photo", "aurora", "paper", "mono", "off"];
@@ -30,15 +31,6 @@ const PRELOAD = process.env.MINKE_SKIN_PRELOAD;
  */
 const ANCHORS = JSON.parse(process.env.MINKE_SKIN_ANCHORS ?? "[]");
 
-/** 主进程那一侧的持久化通道，行为对齐 desktop/main/minke-skin-store.ts。 */
-let stored = "photo";
-const saves = [];
-ipcMain.handle("minke-fork:skin:read", () => stored);
-ipcMain.handle("minke-fork:skin:write", (_event, choice) => {
-  saves.push(choice);
-  stored = choice;
-});
-
 /*
  * 页面侧探针。三件事各自对应一类真实发生过的回归：
  *
@@ -48,12 +40,15 @@ ipcMain.handle("minke-fork:skin:write", (_event, choice) => {
  *   皮肤画在 body 上，上面任何一层不透明 div 都会让它"计算样式全对、渲染一片白"。
  * - body 背景：档位映射本身。
  *
- * 注意不要用 document.styleSheets 判断皮肤在不在：webFrame.insertCSS 注入的
- * 样式表不出现在那里面，查了永远是 false，跟生效与否无关。只能读计算样式。
+ * 注意不要用 document.styleSheets 判断皮肤在不在：那只对 <style> 行成立，
+ * 对 webFrame.insertCSS 注入的 early.css 不成立，两条路混在一页里，查了
+ * 也说明不了问题。要判断有没有生效，只读计算样式。
  */
 const PROBE = `(() => {
   const ANCHORS = ${JSON.stringify(ANCHORS)};
   const out = { skin: document.documentElement.dataset.minkeSkin ?? null };
+  // host 插件写进来的初值。它不对，说明 index-inject 那条缝断了。
+  out.injectedChoice = globalThis.__minkeSkinChoice ?? null;
   const body = getComputedStyle(document.body);
   out.backgroundImage = body.backgroundImage;
   out.backgroundColor = body.backgroundColor;
@@ -96,6 +91,24 @@ const PROBE = `(() => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 走真实写回路径设置档位：同源 POST /minke-skin，鉴权用页面已持有的凭据。
+ *
+ * 不绕过它去直接改设置文件——那样就验不到这条路由，而它正是这次从 Electron
+ * IPC 换过来的那一半。返回 HTTP 状态码，非 204 时编排侧会直接指出来。
+ */
+function writeChoice(win, choice) {
+  return win.webContents.executeJavaScript(`
+    fetch("/api/minke-skin", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ choice: ${JSON.stringify(choice)} }),
+    }).then(async (r) => r.status === 204 ? 204 : r.status + " " + await r.text())
+      .catch((e) => String(e))
+  `);
+}
+
 /*
  * capturePage() 可能返回样式变更"之前"的那一帧，而同一时刻 executeJavaScript
  * 读到的计算样式却是当前的。两者错开一位时，整批帧会集体偏移——报告里的
@@ -128,11 +141,15 @@ app.whenReady().then(async () => {
     },
   });
 
-  const report = { skins: {} };
+  const report = { skins: {}, writeStatus: {} };
+  await win.loadURL(URL_UNDER_TEST);
+  await sleep(1500);
+
   for (const choice of CHOICES) {
-    // 逐档改主进程那份初值再重新 loadURL，而不是靠快捷键循环推当前是哪一档。
-    // 也别写页面的 localStorage：那只是桥不在时的兜底，会被主进程 read 盖掉。
-    stored = choice;
+    // 先写回、再重载：初值由 index-inject 在渲染 index 时现读，所以刷新一次
+    // 拿到的就是新档位。这条链路（POST → 设置文档 → 下次 index 注入）整体
+    // 走一遍，才算验到了持久化。
+    report.writeStatus[choice] = await writeChoice(win, choice);
     await win.loadURL(URL_UNDER_TEST);
     await sleep(1500);
     const frame = await settledFrame(win);
@@ -142,9 +159,9 @@ app.whenReady().then(async () => {
     };
   }
 
-  // 快捷键单独验：按一次，看页面上的档位和主进程收到的写回是否一致。
-  stored = "photo";
-  saves.length = 0;
+  // 快捷键：按一次推进档位，且那次推进要真的落到 host 上——重载后 host 注入
+  // 回来的初值必须已经是新档位。以前这里只能看主进程收到过一次调用。
+  await writeChoice(win, "photo");
   await win.loadURL(URL_UNDER_TEST);
   await sleep(1500);
   const readSkin = () =>
@@ -156,7 +173,16 @@ app.whenReady().then(async () => {
     modifiers: ["alt", "shift"],
   });
   await sleep(600);
-  report.shortcut = { before, after: await readSkin(), saves: [...saves] };
+  const after = await readSkin();
+  await win.loadURL(URL_UNDER_TEST);
+  await sleep(1500);
+  report.shortcut = {
+    before,
+    after,
+    persisted: await win.webContents.executeJavaScript(
+      "globalThis.__minkeSkinChoice ?? null",
+    ),
+  };
 
   writeFileSync(REPORT, JSON.stringify(report, null, 2));
   app.quit();

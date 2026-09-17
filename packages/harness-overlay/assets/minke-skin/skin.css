@@ -2,7 +2,12 @@
  * Fork 本地维护的皮肤，document_start 注入。
  *
  * 与 early.css 解耦，上游更新 early.css 时这里不会冲突。
- * manifest 里排在 early.css 之后，才能盖掉它的 background-color: transparent。
+ *
+ * **不靠注入顺序压过 early.css，靠特异性。** early.css 由 preload 的
+ * webFrame.insertCSS 注入，皮肤由 host 插件写进 index.html 的 <style>，两者
+ * 谁先谁后不受我们控制；而 `html, body, #root { background-color: transparent
+ * !important }` 和 `body { … !important }` 特异性相同，同级 !important 比的就是
+ * 顺序。所以皮肤这条写成 `html body`（0,0,2 > 0,0,1），顺序怎么排都赢。
  *
  * 主题由 skin.js 写在 <html data-minke-skin> 上。没有属性时走 photo，
  * 这样脚本执行前的第一帧就已经是最终样式，不会闪。
@@ -83,7 +88,7 @@
   }
 }
 
-body {
+html body {
   background-color: var(--minke-skin-color) !important;
   background-image: var(--minke-skin-image) !important;
   background-position: var(--minke-skin-position) !important;
@@ -129,7 +134,7 @@ html:not([data-minke-skin="off"]) :is(
 }
 
 /* off：完全让位给上游，early.css 的透明背景重新生效。 */
-[data-minke-skin="off"] body {
+html[data-minke-skin="off"] body {
   background-color: transparent !important;
   background-image: none !important;
 }
