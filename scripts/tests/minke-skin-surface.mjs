@@ -15,8 +15,8 @@
  * 流程：起一个隔离 harness（自己的 DSH_HOME，不碰 ~/.minke）→ 用
  * tests/minke-skin-surface-runtime.cjs 那个小宿主逐档收帧和量样式 → 在这里断言。
  */
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -36,11 +36,59 @@ const ELECTRON = path(
 const PRELOAD = path(".vite/build/desktop-preload.js");
 const HOST_ENTRY = path("tests/minke-skin-surface-runtime.cjs");
 
-/** 三个图片档：背景图由构建期内联成 data: URI。 */
-const IMAGE_SKINS = ["photo", "aurora", "mono"];
+/**
+ * 图片档和它们的文件名。
+ *
+ * 只有 photo 那张随包分发；aurora / mono 是私人配图，住在 `$DSH_HOME/skins/`，
+ * 干净 clone 和 CI 上根本没有。所以"哪几档该有图"是**跑的时候算出来的**，不能
+ * 写死——写死的话，CI 上这条命令必红，而那只是因为图不在那台机器上。
+ */
+const IMAGE_FILES = {
+  photo: "minke-background.jpeg",
+  aurora: "minke-background-aurora.jpeg",
+  mono: "minke-background-mono.jpeg",
+};
 /** 纯渐变档：没有图片，但 body 上必须有底色。 */
 const FLAT_SKINS = ["paper"];
-const ALL_SKINS = [...IMAGE_SKINS, ...FLAT_SKINS, "off"];
+const ALL_SKINS = [...Object.keys(IMAGE_FILES), ...FLAT_SKINS, "off"];
+
+/** 真实的 DSH_HOME，取上游 `explicit > DSH_HOME > ~/.dsh` 那套契约的后两档。 */
+function realDshHome() {
+  const fromEnv = process.env.DSH_HOME?.trim();
+  return fromEnv !== undefined && fromEnv.length > 0
+    ? fromEnv
+    : join(homedir(), ".minke", "harness");
+}
+
+/**
+ * 找齐这台机器上实际存在的背景图，并把私人配图播进隔离 home。
+ *
+ * 隔离 home 是每次现建的空目录，不播的话 aurora / mono 一定没图——那是测试
+ * 环境的事实，不是回归。
+ */
+async function seedBackgrounds(home) {
+  const skinsDir = join(home, "skins");
+  await mkdir(skinsDir, { recursive: true });
+  const available = [];
+  for (const [skin, file] of Object.entries(IMAGE_FILES)) {
+    // 随包分发的那张**故意不播**：让它走包内兜底那条分支，于是这一趟同时验到
+    // 取图链的两头——photo 从包里来，私人档从 $DSH_HOME/skins/ 来。
+    try {
+      await readFile(path(`packages/harness-overlay/assets/minke-skin/${file}`));
+      available.push(skin);
+      continue;
+    } catch {
+      // 不随包分发，那就该在用户目录里。
+    }
+    try {
+      await copyFile(join(realDshHome(), "skins", file), join(skinsDir, file));
+      available.push(skin);
+    } catch {
+      // 这台机器上没有这张图，那一档就是纯底色，不算回归。
+    }
+  }
+  return available;
+}
 
 /** 这条命令要跑一两分钟，全程无输出的话分不清"在跑"和"卡住"。 */
 const progress = (message) => console.log(`· ${message}`);
@@ -171,7 +219,7 @@ async function collectReport(url, reportPath, anchors) {
   }
 }
 
-function assertReport(report) {
+function assertReport(report, imageSkins) {
   const skins = report.skins ?? {};
 
   for (const choice of ALL_SKINS) {
@@ -200,7 +248,7 @@ function assertReport(report) {
       + "主进程那条 read 通道没接上的话，所有档会一起回落成默认值",
     );
 
-    if (IMAGE_SKINS.includes(choice)) {
+    if (imageSkins.includes(choice)) {
       check(
         observed.hasDataUri,
         `${choice}：body 背景里没有内联的 data: URI，图片没进页面`,
@@ -318,6 +366,8 @@ async function main() {
   try {
     // 隔离的 DSH_HOME：真 app 那份 ~/.minke 里有用户的会话和配置，不碰。
     progress("起隔离 harness…");
+    const available = await seedBackgrounds(join(workspace, "home"));
+    progress(`这台机器上有图的档：${available.join(" / ") || "（一张都没有）"}`);
     harness = await startHarness(join(workspace, "home"));
     progress(`harness 已就绪：${harness.url.replace(/token=[^&]*/u, "token=…")}`);
     const anchors = await skinAnchors();
@@ -328,7 +378,7 @@ async function main() {
       anchors,
     );
     progress("收帧完成，开始断言");
-    assertReport(report);
+    assertReport(report, available);
   } finally {
     if (harness !== undefined) await stopHarness(harness.child);
     await rm(workspace, { force: true, recursive: true });

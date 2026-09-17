@@ -149,6 +149,10 @@ SKIN_URL='http://127.0.0.1:<port>/?token=<token>' \
   skin.css 在不在，永远返回 false，跟它有没有生效毫无关系。
   要判断有没有生效，去读目标元素的**计算样式**。
 
+**私人配图在 `~/.minke/harness/skins/`，不在仓库里。** 隔离 harness 用的是空的
+`DSH_HOME`，不把图播进去的话 aurora / mono 一定没图——那是测试环境的事实，不是
+回归。`test:skin:surface` 自己会播（`seedBackgrounds`），手搓宿主时记得也播一下。
+
 **别再依赖「主进程那份初值」那套说法。** 选择现在存在 Harness 的用户设置文档里
 （`DSH_HOME` 下，和 ui-theme 的 light/dark 同一份），不在 `<userData>/desktop/`，
 也不经过任何 IPC 通道。

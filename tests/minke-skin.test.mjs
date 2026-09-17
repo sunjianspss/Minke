@@ -106,8 +106,8 @@ function pressSkinShortcut(listeners, overrides = {}) {
   });
 }
 
-// 只有 photo 那张随仓库分发。aurora / mono 用的是私人配图，仓库是公开的，
-// 所以图不进历史（见 .gitignore），clone 下来那两档只剩底色。
+// 只有 photo 那张随包分发。aurora / mono 用的是私人配图，仓库是公开的，
+// 所以它们根本不在仓库树里——放在 `$DSH_HOME/skins/`，由 host 插件运行时去取。
 const SHIPPED_BACKGROUND = "minke-background.jpeg";
 const LOCAL_BACKGROUNDS = [
   "minke-background-aurora.jpeg",
@@ -115,7 +115,7 @@ const LOCAL_BACKGROUNDS = [
 ];
 const BACKGROUND_FILES = [SHIPPED_BACKGROUND, ...LOCAL_BACKGROUNDS];
 
-test("the shipped background stays where the preload globs it", () => {
+test("the shipped background stays where the host plugin reads it", () => {
   assert.ok(
     existsSync(
       new URL(
@@ -123,19 +123,26 @@ test("the shipped background stays where the preload globs it", () => {
         import.meta.url,
       ),
     ),
-    "preload 的 import.meta.glob 从这里内联图片，挪走了默认档就没图",
+    "host 插件从这里读默认图，挪走了 photo 档就没图",
   );
 });
 
-test("the private backgrounds never reach the public history", () => {
-  // 仓库公开，这两张一旦提交就进历史，之后删文件也清不掉。
-  const gitignore = read(".gitignore");
+test("the private backgrounds never reach the public repository", () => {
+  // 仓库公开，这两张一旦提交就进历史，之后删文件也清不掉。它们现在住在
+  // `$DSH_HOME/skins/`，连仓库树都不在——顺带解决两件事：
+  //   1. 运行时体积不再取决于"这台机器上有没有私图"。它们曾经跟着包的
+  //      `files: ["assets", …]` 进 runtime/host，而 darwin 预算的余量不到
+  //      1 MiB，于是 CI 全绿、有私图的机器先撞 stage 的硬闸。
+  //   2. `git clean -xdf` 不会再误删它们。
   for (const file of LOCAL_BACKGROUNDS) {
     assert.ok(
-      gitignore.includes(`${SKIN_ASSET_DIR}/${file}`),
-      `${file} 没被忽略，会跟着推进公开仓库`,
+      !existsSync(new URL(`../${SKIN_ASSET_DIR}/${file}`, import.meta.url)),
+      `${file} 又出现在仓库树里了——它该放 $DSH_HOME/skins/，别再靠 .gitignore 挡`,
     );
   }
+  // 取图那条链（$DSH_HOME/skins/ 优先、包内兜底）不在这里断言源码文本：
+  // `pnpm test:skin:surface` 真的两条分支各走一趟——photo 走包内兜底，
+  // 私人档走用户目录——比 grep 源码强，也不必往断言棘轮里加债。
 });
 
 test("the skin no longer touches any upstream desktop file", () => {

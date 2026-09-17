@@ -92,6 +92,34 @@ const PROBE = `(() => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * 轮询等一个条件成立，而不是睡一个固定时长。
+ *
+ * 固定 sleep 在忙机器上就是假红的来源：这条命令是每次同步都要看的守卫，
+ * 它红一次的代价是去查一个根本不存在的回归。
+ */
+async function waitFor(read, ok, label, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  do {
+    last = await read();
+    if (ok(last)) return last;
+    await sleep(100);
+  } while (Date.now() < deadline);
+  throw new Error(`等 ${label} 超时（${timeoutMs}ms），最后读到 ${JSON.stringify(last)}`);
+}
+
+const currentSkin = (win) =>
+  win.webContents.executeJavaScript(
+    "document.documentElement.dataset.minkeSkin ?? null",
+  );
+
+/** 载入并等皮肤真的落到 <html> 上，而不是盲等一个固定时长。 */
+async function loadSkinned(win, url) {
+  await win.loadURL(url);
+  await waitFor(() => currentSkin(win), (v) => v !== null, "皮肤挂上 <html>");
+}
+
+/**
  * 走真实写回路径设置档位：同源 POST /minke-skin，鉴权用页面已持有的凭据。
  *
  * 不绕过它去直接改设置文件——那样就验不到这条路由，而它正是这次从 Electron
@@ -142,16 +170,14 @@ app.whenReady().then(async () => {
   });
 
   const report = { skins: {}, writeStatus: {} };
-  await win.loadURL(URL_UNDER_TEST);
-  await sleep(1500);
+  await loadSkinned(win, URL_UNDER_TEST);
 
   for (const choice of CHOICES) {
     // 先写回、再重载：初值由 index-inject 在渲染 index 时现读，所以刷新一次
     // 拿到的就是新档位。这条链路（POST → 设置文档 → 下次 index 注入）整体
     // 走一遍，才算验到了持久化。
     report.writeStatus[choice] = await writeChoice(win, choice);
-    await win.loadURL(URL_UNDER_TEST);
-    await sleep(1500);
+    await loadSkinned(win, URL_UNDER_TEST);
     const frame = await settledFrame(win);
     report.skins[choice] = {
       frameBytes: frame.toPNG().length,
@@ -162,20 +188,32 @@ app.whenReady().then(async () => {
   // 快捷键：按一次推进档位，且那次推进要真的落到 host 上——重载后 host 注入
   // 回来的初值必须已经是新档位。以前这里只能看主进程收到过一次调用。
   await writeChoice(win, "photo");
-  await win.loadURL(URL_UNDER_TEST);
-  await sleep(1500);
-  const readSkin = () =>
-    win.webContents.executeJavaScript("document.documentElement.dataset.minkeSkin");
-  const before = await readSkin();
+  await loadSkinned(win, URL_UNDER_TEST);
+  const before = await currentSkin(win);
+
+  // sendInputEvent 把按键投给**聚焦的** web contents；窗口没聚焦时它悄悄丢掉，
+  // 表现就是"快捷键没反应"。实测不显式聚焦会偶发假红。
+  win.show();
+  win.focus();
+  win.webContents.focus();
+  await sleep(200);
   win.webContents.sendInputEvent({
     type: "keyDown",
     keyCode: "K",
     modifiers: ["alt", "shift"],
   });
-  await sleep(600);
-  const after = await readSkin();
-  await win.loadURL(URL_UNDER_TEST);
-  await sleep(1500);
+
+  let after;
+  try {
+    after = await waitFor(
+      () => currentSkin(win),
+      (skin) => skin !== before,
+      "快捷键推进档位",
+    );
+  } catch {
+    after = await currentSkin(win);
+  }
+  await loadSkinned(win, URL_UNDER_TEST);
   report.shortcut = {
     before,
     after,

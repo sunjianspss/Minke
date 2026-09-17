@@ -672,7 +672,19 @@ server、不产生子进程、也就没有上面那个 Dock 条目；要用的�
 
 素材跟着 overlay 包的 `files: ["lib", "assets", …]` 进 `runtime/host`，host 插件在
 运行时读；背景图读成 data: URI 直接塞进注入行，不走 HTTP——多一次往返首帧就会闪。
-aurora / mono 是私人配图（在 `.gitignore` 里），读不到就跳过，那两档退化成纯底色。
+
+**取图按 `$DSH_HOME/skins/<文件名>` → 包内 `assets/minke-skin/<文件名>`，先命中的
+算数。** 只有 photo 那张随包分发；aurora / mono 是私人配图，住在
+`~/.minke/harness/skins/`，**不在仓库树里**。这不只是"公开仓库不能放私图"：
+
+- 它们曾经放在包里，于是跟着 `files` 进 `runtime/host`——**"这台机器上有没有
+  私图"决定了运行时体积**，而 darwin 预算只剩不到 1 MiB 余量（`stage.mjs:180`
+  那道硬闸）。表现会是 CI 全绿、有私图的机器先撞墙，最难查的那一种。
+- `~/.minke` 不受 `git clean -xdf` 影响，私图不会在清仓库时被误删。
+- 同名文件丢进 `$DSH_HOME/skins/` 也能盖掉随包的默认图。
+
+读不到就跳过，那一档退化成纯底色，而不是让插件起不来。新机器上把私图拷进
+`~/.minke/harness/skins/` 即可——次数和以前拷进仓库目录一样，就一次。
 
 可选 `photo`（默认）、`aurora`、`paper`、`mono`、`off`、`auto`（按日期在四个视觉
 主题间轮换）。**Alt+Shift+K 依次切换。**
@@ -720,8 +732,14 @@ POST → 设置文档 → 下次 index 注入，所以"选择活不活得过重�
 文件名。相对路径和 `file://` 都不行（前者解析到 Harness 的 HTTP origin，后者被跨
 协议拦掉）。不走 HTTP 路由取图也是有意的：多一次往返，首帧就会闪一下白底。
 
-**加图要改两处**：把文件放进 `packages/harness-overlay/assets/minke-skin/`，并在
-`assets.ts` 的 `BACKGROUNDS` 里加一行。
+**加图要改两处**：把文件放进 `~/.minke/harness/skins/`（私人图）或
+`packages/harness-overlay/assets/minke-skin/`（愿意随包分发的），并在 `assets.ts`
+的 `BACKGROUNDS` 里加一行。
+
+**随包分发的图先压到显示尺寸再提交。** 窗口高 855px、`contain` 按高度缩，Retina
+2x 也就 1710px，超出的像素纯属白占预算。`sips --resampleHeight 1710 -s format jpeg
+-s formatOptions 55` 是验过的档位——图上还压着一层 0.42 透明度的白罩，看不出损失。
+注意别用高 quality 重编码已经压好的 JPEG：quality 82 那次反而把三张图整体撑大了。
 `tests/minke-skin.test.mjs` 把「变量、文件、映射」三者的一一对应锁住了。
 私人配图记得同时进 `.gitignore`。
 

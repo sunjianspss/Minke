@@ -9,17 +9,31 @@
  * 背景图在这里读成 data: URI 再发给页面。不走 HTTP 路由是有意的：皮肤要在
  * 首帧就是最终样式，多一次网络往返就会闪一下白底。
  */
+import { dshHomePath } from "@deepseek-ai/dsh-home-paths";
 import { readFile } from "node:fs/promises";
 
 /** 从 `lib/fork.js` 回到包根的 `assets/minke-skin/`。 */
 const assetUrl = (name: string) =>
   new URL(`../assets/minke-skin/${name}`, import.meta.url);
 
+/** 用户自己放图的地方：`$DSH_HOME/skins/`。 */
+export const USER_SKIN_DIR = "skins";
+
 /**
  * 三张背景图和它们对应的 CSS 变量。
  *
- * aurora / mono 是私人配图，在 .gitignore 里，clone 下来根本不存在——
- * 读不到就跳过，那两档退化成纯底色，而不是让整个插件起不来。
+ * 取图按 `$DSH_HOME/skins/<文件名>` → 包内 `assets/minke-skin/<文件名>` 的顺序，
+ * 先命中的算数。两个理由：
+ *
+ * 1. **私人配图不进运行时。** aurora / mono 是私人图，仓库公开所以不能提交；
+ *    要是留在包里，它们会跟着 `files: ["assets", …]` 进 `runtime/host`——
+ *    于是"这台机器上有没有私图"决定了运行时体积，而 darwin 预算只剩不到
+ *    1 MiB 余量（`stage.mjs` 里那道硬闸）。表现会是 CI 全绿、有私图的机器
+ *    先撞墙，最难查的那一种。放 `$DSH_HOME/skins/` 就和构建产物彻底脱钩。
+ * 2. 顺带：`~/.minke` 不受 `git clean -xdf` 影响，私图不会被清仓库时误删。
+ *
+ * 读不到就跳过，那一档退化成纯底色，而不是让整个插件起不来。
+ * 同名文件放进 `$DSH_HOME/skins/` 也能盖掉随包分发的默认图。
  */
 const BACKGROUNDS = Object.freeze({
   "--minke-background-image": "minke-background.jpeg",
@@ -35,12 +49,15 @@ export interface SkinAssets {
 }
 
 async function readBackground(file: string): Promise<string | undefined> {
-  try {
-    const bytes = await readFile(assetUrl(file));
-    return `data:image/jpeg;base64,${bytes.toString("base64")}`;
-  } catch {
-    return undefined;
+  for (const source of [dshHomePath(USER_SKIN_DIR, file), assetUrl(file)]) {
+    try {
+      const bytes = await readFile(source);
+      return `data:image/jpeg;base64,${bytes.toString("base64")}`;
+    } catch {
+      // 这一处没有就看下一处；两处都没有才算这一档没图。
+    }
   }
+  return undefined;
 }
 
 /** 读齐皮肤素材。样式和脚本缺一不可，缺了就该响亮地失败。 */
