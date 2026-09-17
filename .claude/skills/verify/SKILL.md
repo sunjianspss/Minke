@@ -86,7 +86,23 @@ PATH="$R/bin:$PATH" \
 写个最小 stdio MCP server 当 fixture 最省事：响应 `initialize` /
 `tools/list` 就够，往 stderr 打一行带 pid 的标记方便定位。
 
-## 皮肤：Electron skin-surface 小宿主
+## 皮肤：先跑 `pnpm test:skin:surface`
+
+**这一节的东西现在已经是一条命令了，别再手搓。**
+
+```bash
+pnpm test:skin:surface     # 约 25 秒，5 档逐帧 + 探针 + 快捷键，红绿结论
+```
+
+它自己起隔离 harness 和小宿主，抓两类真实回归：面板把皮肤盖住（v0.2.0 那次）、
+锚的 slot 被上游改名后规则匹配 0 个元素（v0.6.1 漏掉的那次）。两条负向对照都验过。
+脚本在 `scripts/tests/minke-skin-surface.mjs` + `tests/minke-skin-surface-runtime.cjs`，
+背景与设计约束见 FORK.md 第 3 节第 3.5 层。
+
+下面这套手搓宿主只在**改这个脚本本身**、或要看脚本没覆盖的东西时才需要——
+比如开着会话的状态、右列展开后的样子、某个具体元素的层级。
+
+### 手搓宿主（改脚本时才用）
 
 不碰用户已装的 app，也绕开 single-instance lock。放任意目录。
 

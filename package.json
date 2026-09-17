@@ -39,6 +39,7 @@
     "test:desktop:harness-navigation": "electron tests/harness-navigation-runtime.cjs",
     "test:fork": "node --test tests/minke-fork.test.mjs tests/minke-skin.test.mjs",
     "test:fork:boot": "pnpm run build:product-packages && node --test --test-force-exit tests/minke-fork-boot.test.mjs",
+    "test:skin:surface": "pnpm run build:preload && pnpm run harness:stage:ensure && node scripts/tests/minke-skin-surface.mjs",
     "test:sys": "node --test tests/sys-native-module.test.mjs",
     "harness:verify": "node scripts/harness/verify.mjs",
     "harness:stage": "node scripts/harness/stage.mjs",

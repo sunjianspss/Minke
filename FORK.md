@@ -168,6 +168,37 @@ MINKE_PNPM_ENTRY="$R/node_modules/pnpm/bin/pnpm.cjs" PATH="$R/bin:$PATH" \
 抓得到：插件加载失败、子进程起不来、环境变量问题。而且能做干净的 A/B——改一个变量
 再跑一次，因果立刻清楚。
 
+### 第 3.5 层：皮肤的运行时验证 —— `pnpm test:skin:surface`
+
+皮肤是 fork 里唯一一处「静态断言全绿、东西其实已经坏了」的地方，所以它有自己的
+一条运行时命令。约 25 秒，自己起隔离 harness 和一个 Electron 小宿主，逐档收真实帧。
+
+```bash
+pnpm test:skin:surface
+```
+
+它盯的是两类**真实发生过、且静态断言抓不到**的回归：
+
+| 形态 | 什么时候发生的 | 断言 |
+|---|---|---|
+| 上游给每列加了自带不透明底的面板，皮肤被整个盖住 | v0.2.0 | 从视口中心往上钻，body 之上不许有铺满视口的不透明元素 |
+| 上游把 slot 改了名，打透明的规则匹配 0 个元素 | v0.5.0 引入、v0.6.1 漏掉 | 皮肤 CSS 里锚的每个 data-slot 都必须在页面上存在 |
+
+还顺带验：5 档的帧两两不同（抓「皮肤整个没生效」和「收帧偏移一位」）、三个图片档
+的背景真的是内联 data URI、off 档把 body 完整还给上游、快捷键按一次页面档位和主进程
+收到的写回一致。
+
+**两条设计约束，改这个脚本时别破坏：**
+
+1. **锚点必须从 `skin.css` 解析，不能写死在探针里。** 写死的话探针量的永远是「对的
+   那几个名字」，皮肤实际锚了什么不影响结果——第一版就是这样，把锚点改回上游已经
+   废弃的 `conversation`，整条命令照样全绿。**守卫写完必须种一次真故障验它会红。**
+2. **判据是「锚元素在不在」，不是「有没有子元素」。** 右列默认折叠，元素在但没有
+   子元素是正常状态；被改名的 slot 才是整个查不到。
+
+两条负向对照都验过：把锚点改回 `conversation` → 红；把打透明改成不透明白底 → 红
+（4 档报被盖住 + 1 条报面板没打透明）。
+
 ### 第 4 层：真实 app
 
 ```bash
@@ -189,7 +220,8 @@ pnpm start   # 必须在有 TTY 的终端里跑，electron-forge start 是交互
 1. 写代码 → `pnpm test:fork`
 2. `pnpm harness:stage` 看体积和闭包
 3. **第 3 层跑一次读日志**
-4. `pnpm start` 问一句 agent 确认工具可见
+4. 碰过皮肤的话 → `pnpm test:skin:surface`
+5. `pnpm start` 问一句 agent 确认工具可见
 
 打包验证（`pnpm package` / `pnpm make:macos`）只在改动可能影响产物结构时才需要；
 它会再跑一遍完整 stage，并报出 Host 与 app 的最终体积。
@@ -227,6 +259,9 @@ pnpm harness:stage
 
 # fork 对 dsh-* 的调用签名是否还对得上（三个工程，含 src/fork）
 pnpm --filter @lencx/minke-harness-overlay typecheck
+
+# 皮肤在新版 harness 上还活着吗（逐帧，约 25 秒）
+pnpm test:skin:surface
 ```
 
 `contract.mjs` 要求每个 `productBundle.runtimePackages` 条目在 `cordis.patch.yml`
