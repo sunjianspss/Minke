@@ -219,11 +219,14 @@ node -e 'import("./scripts/harness/contract.mjs")
   .then(() => console.log("contract OK"))
   .catch(e => { console.error("contract FAILED:", e.message); process.exit(1) })'
 
+# 重建 runtime/host。**必须排在 typecheck 前面**：submodule 的 node_modules 是
+# 上一版留下的，装它的是 stage.mjs 里那句 `pnpm install --recursive`，根目录的
+# pnpm install 管不着。顺序反了，typecheck 会在 vendor/ 里报一堆 TS2307，
+# 看着像 fork 的签名对不上，其实只是 submodule 没装（2026-09-17 踩过）。
+pnpm harness:stage
+
 # fork 对 dsh-* 的调用签名是否还对得上（三个工程，含 src/fork）
 pnpm --filter @lencx/minke-harness-overlay typecheck
-
-# 重建 runtime/host，否则后面验的还是旧版本
-pnpm harness:stage
 ```
 
 `contract.mjs` 要求每个 `productBundle.runtimePackages` 条目在 `cordis.patch.yml`
@@ -239,6 +242,57 @@ pnpm harness:stage
 | 2026-09-03 | `104249b → 39cf048`（v0.4.0，31 个提交） | `0.1.1-rc.2 → 0.1.2-alpha.5` | 皮肤的注入路径被上游拆掉，重接 |
 | 2026-09-10 | `39cf048 → 458980e`（v0.5.0，4 个提交） | `0.1.2-alpha.5 → 0.1.3-alpha.1` | rebase 零冲突，boot 名单补两项 |
 | 2026-09-14 | `458980e → ffb0da8`（v0.6.1，23 个提交） | `0.1.3-alpha.1 → 0.1.5-rc.2` | 1 处冲突，boot 名单再补两项 |
+| 2026-09-17 | `ffb0da8 → bdb6a7a`（v0.7.0，13 个提交） | `0.1.5-rc.2 → 0.1.6-alpha.1` | rebase 零冲突，查出皮肤两个锚点早已失效 |
+
+#### 2026-09-17：v0.7.0 —— 顺序反了，以及皮肤锚点的无声失效
+
+rebase 29 个提交零冲突。上游碰了 fork 改过的三个文件，但全在头部（版本号、
+submodule commit、一句注释措辞），fork 在尾部，3-way 自动合——**末尾追加**这条
+规则又一次兑现。`minke-skin.ts`、`forge.config.ts`、`runtime-prune.mjs`、
+断言基线上游一行没动。
+
+**第 4 节那四行加四行的顺序这次是错的，按它走会得出假结论。** 上游把
+`@modelcontextprotocol/sdk@1.29` 换成了 `@modelcontextprotocol/client@2.0.0`
+（`dsh-mcp-client` 的依赖改了名），而 submodule 的 `node_modules` 是上一版留下的。
+照第 4 节的顺序先 typecheck，会在 `vendor/` 里报 6 条 `TS2307: Cannot find module
+'@modelcontextprotocol/client'`——看起来像 fork 的调用签名对不上，其实只是
+submodule 没装。装 submodule 依赖的是 `harness:stage`（`stage.mjs` 里那句
+`pnpm install --recursive --frozen-lockfile`），根目录的 `pnpm install` 不管
+submodule 那个 workspace。
+
+→ **上游 bump harness 时，`harness:stage` 要排在 typecheck 前面。**
+根目录 `pnpm install` 和 contract 仍在最前（contract 只读 JSON，不碰 node_modules）。
+
+**查出一处既有缺陷：皮肤的打透明规则有三分之二锚在不存在的 slot 上。**
+`skin.css` 的 `[data-slot="sidebar" | "conversation" | "details"] > *` 里，
+后两个上游早就改名了——harness `581803bf`（`feat(client): add global sidebar
+panels`，落在 `dsh-v0.1.5-alpha.2`）把 `conversation` 拆成 `main` /
+`main.conversation`，`details` 换成 `rightbar` / `rightbar.session`。也就是说
+**这是 v0.6.1 那次同步就该发现、却漏掉的**，不是 v0.7.0 引入的。
+
+眼下皮肤看着仍然正常（5 档逐帧都对），因为新的中列面板当前不带不透明底——
+**护栏没了，但还没撞上。** 上游哪天给 `main.conversation` 加回不透明底，
+皮肤就会整片被盖住，而计算样式全部正常。
+
+为什么测试没拦住：`tests/minke-skin.test.mjs` 的「punches through upstream's
+per-column panels」只断言 **fork 自己的 CSS 里写了这三个选择器**，从不检查
+**上游是否还在发这些 slot**。这条断言的注释写着「上游一改结构就会失败」，
+但那只对同文件里 `#root > main > div` 那条成立。**验自己写了什么，不等于验它还
+匹配得上**——这是这次的教训，和 v0.3.0 那条「寄生在上游测试上的覆盖会被无声收走」
+是同一类病的两面。
+
+修法（未做，另起一次改动）：锚点换成 `main.conversation` / `rightbar`，并给
+`minke-fork.test.mjs` 补一条**读 `slot-catalog.ts` 的断言**——皮肤用到的每个
+data-slot 都必须在上游目录里存在，上游一改名就红。
+
+验证：contract OK、三工程 typecheck `--force` 全量过、`test:fork` 24/24、
+`test:assertions` 3/3、`test:fork:boot` 插件树起得来、`test:desktop` 224 条只剩
+Homebrew node 那条恒失败的（见 `.claude/skills/verify`）、`harness:stage`
+149.0 MiB/11653 文件、隔离 harness 干净启动、5 档皮肤逐帧确认、快捷键
+`photo → aurora` 且主进程收到 save。
+
+**顺带记一笔预算：** 运行时 149.0 MiB，darwin 预算 157286400 字节（150.0 MiB），
+只剩 1 MiB 余量（上一版 127.4 MiB）。下次上游再长一点就会撞线。
 
 上游那次改了三块：Host RPC 换成 `MinkeHostRpcEndpoint` 泛型分发（未知 endpoint
 现在返回 `bad-request`）、`main.ts` 拆出 `harness-lifecycle.ts` 与
