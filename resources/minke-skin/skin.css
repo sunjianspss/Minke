@@ -98,14 +98,23 @@ body {
  * early.css 只把 `#root > *` 打成透明。v0.2.0 起上游在每一列里又加了一层
  * 自带不透明底的面板，early.css 够不到：
  *
- *   frame > sidebarCol > [data-slot="sidebar"]      > <面板 rgb(249,250,251)>
- *         > centerCol  > [data-slot="conversation"] > <面板 rgb(255,255,255)>
- *         > detailsCol > [data-slot="details"]      > <面板，默认折叠所以量不到>
+ *   frame > sidebarCol > [data-slot="sidebar"]           > <SidebarRoot>
+ *         > centerCol  > [data-slot="main.conversation"] > <ConversationRoot>
+ *         > rightCol   > [data-slot="rightbar"]          > <面板，默认折叠所以量不到>
  *
  * 面板本身的类名是 CSS Module 哈希（-TPGmq_root / r3IEgq_root），每次构建都变，
  * 锁不住；但它们都是某个 data-slot 容器的直接子元素，而 data-slot 是上游稳定的
  * 命名契约（early.css 自己就在用 [data-slot="conversation.session.header"]）。
  * 所以锚 data-slot，取直接子元素，不猜层数。
+ *
+ * **但"稳定"不等于"不变"。** 这三个键原本是 sidebar / conversation / details，
+ * 上游在 `581803bf`（dsh-v0.1.5-alpha.2）把中列拆成 main / main.conversation、
+ * 右列换成 rightbar，后两个锚点就此匹配不到任何元素——皮肤看着照常，因为新面板
+ * 当时不带不透明底，护栏却已经没了。v0.6.1 那次同步整整漏了一轮。
+ * 现在由 minke-skin.test.mjs 的「皮肤锚的每个 data-slot 都在上游目录里」盯着。
+ *
+ * 中列锚 main.conversation 而不是 main：main 的直接子元素是个 0×0 的空壳，
+ * 真正铺满整列、带 CSS Module 底色的 ConversationRoot 挂在 main.conversation 下。
  *
  * 只打这一层，不往里递归：面板内部的卡片、输入框、按钮该是什么底就是什么底。
  * off 档直接不匹配（而不是事后 revert）：revert-layer 会一路退到 UA 样式，
@@ -113,8 +122,8 @@ body {
  */
 html:not([data-minke-skin="off"]) :is(
   [data-slot="sidebar"],
-  [data-slot="conversation"],
-  [data-slot="details"]
+  [data-slot="main.conversation"],
+  [data-slot="rightbar"]
 ) > * {
   background-color: transparent !important;
 }

@@ -242,7 +242,7 @@ pnpm --filter @lencx/minke-harness-overlay typecheck
 | 2026-09-03 | `104249b → 39cf048`（v0.4.0，31 个提交） | `0.1.1-rc.2 → 0.1.2-alpha.5` | 皮肤的注入路径被上游拆掉，重接 |
 | 2026-09-10 | `39cf048 → 458980e`（v0.5.0，4 个提交） | `0.1.2-alpha.5 → 0.1.3-alpha.1` | rebase 零冲突，boot 名单补两项 |
 | 2026-09-14 | `458980e → ffb0da8`（v0.6.1，23 个提交） | `0.1.3-alpha.1 → 0.1.5-rc.2` | 1 处冲突，boot 名单再补两项 |
-| 2026-09-17 | `ffb0da8 → bdb6a7a`（v0.7.0，13 个提交） | `0.1.5-rc.2 → 0.1.6-alpha.1` | rebase 零冲突，查出皮肤两个锚点早已失效 |
+| 2026-09-17 | `ffb0da8 → bdb6a7a`（v0.7.0，13 个提交） | `0.1.5-rc.2 → 0.1.6-alpha.1` | rebase 零冲突，修好早已失效的两个皮肤锚点 |
 
 #### 2026-09-17：v0.7.0 —— 顺序反了，以及皮肤锚点的无声失效
 
@@ -281,9 +281,15 @@ per-column panels」只断言 **fork 自己的 CSS 里写了这三个选择器**
 匹配得上**——这是这次的教训，和 v0.3.0 那条「寄生在上游测试上的覆盖会被无声收走」
 是同一类病的两面。
 
-修法（未做，另起一次改动）：锚点换成 `main.conversation` / `rightbar`，并给
-`minke-fork.test.mjs` 补一条**读 `slot-catalog.ts` 的断言**——皮肤用到的每个
-data-slot 都必须在上游目录里存在，上游一改名就红。
+**已修（同一次同步里跟着做了）：** 锚点换成 `main.conversation` / `rightbar`，
+并给 `minke-skin.test.mjs` 补了一条**读上游 `slot-catalog.ts` 的断言**——
+皮肤规则里用到的每个 data-slot 都必须在那份目录里存在，上游一改名立刻红。
+（验过不是空断言：把锚点改回 `conversation` 立即失败，还原即绿。）
+
+中列锚 `main.conversation` 而不是 `main`，是跑起来量出来的：`main` 的直接子元素
+是个 0×0 空壳，真正铺满整列、带 CSS Module 底色的 `ConversationRoot`
+（`-TPGmq_root`，正是原注释里记下的那个哈希）挂在 `main.conversation` 下。
+`rightbar` 默认折叠、没有子元素，和当年 `details` 的情形一样。
 
 验证：contract OK、三工程 typecheck `--force` 全量过、`test:fork` 24/24、
 `test:assertions` 3/3、`test:fork:boot` 插件树起得来、`test:desktop` 224 条只剩

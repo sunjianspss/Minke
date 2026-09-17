@@ -197,7 +197,7 @@ test("the skin punches through upstream's per-column panels", () => {
     /html:not\(\[data-minke-skin="off"\]\)[^{]*\{[^}]*\}/u,
   );
   assert.ok(rule, "面板透明规则不见了，皮肤会被上游面板整个盖住");
-  for (const slot of ["sidebar", "conversation", "details"]) {
+  for (const slot of ["sidebar", "main.conversation", "rightbar"]) {
     assert.match(
       rule[0],
       new RegExp(`\\[data-slot="${slot}"\\]`, "u"),
@@ -215,6 +215,41 @@ test("the skin punches through upstream's per-column panels", () => {
     /\.[A-Za-z-]*[a-z][A-Z0-9][A-Za-z0-9]{3,}_[a-z]/u,
     "别拿 CSS Module 的哈希类名当选择器，构建一次就失效",
   );
+});
+
+test("every data-slot the skin anchors to still exists upstream", () => {
+  // 上一条只验「fork 自己写了这几个选择器」，从不验「上游还在发这些 slot」。
+  // 两者的差别不是理论上的：上游 581803bf（dsh-v0.1.5-alpha.2）把 conversation
+  // 改名成 main.conversation、details 换成 rightbar，皮肤的三个锚点当场废掉两个，
+  // 而上一条依旧全绿，v0.6.1 那次同步就这么漏过去了。
+  //
+  // slot-catalog.ts 是上游自己维护的 slot 目录（`key: '<名字>'` 一条一行），
+  // 它就是那份「稳定命名契约」的正本。锚到目录上，上游一改名这里立刻红。
+  const catalogPath =
+    "vendor/deepseek-harness/packages/extensions/cordis-client-runner/src/client/slot-catalog.ts";
+  assert.ok(
+    existsSync(new URL(`../${catalogPath}`, import.meta.url)),
+    `${catalogPath} 不见了——submodule 没 init，或上游挪了目录`,
+  );
+  const catalogKeys = new Set(
+    [...read(catalogPath).matchAll(/key: '([^']+)'/gu)].map((m) => m[1]),
+  );
+  assert.ok(catalogKeys.size > 20, "slot 目录解析出来是空的，正则跟上游对不上了");
+
+  // 只看真正生效的规则：注释里也提到过 slot 名字，那些不该参与断言。
+  const rules = extensionSkin.replace(/\/\*[\s\S]*?\*\//gu, "");
+  const anchored = [
+    ...new Set([...rules.matchAll(/\[data-slot="([^"]+)"\]/gu)].map((m) => m[1])),
+  ].sort();
+  assert.ok(anchored.length >= 3, "皮肤一个 data-slot 都没锚，规则被删了？");
+
+  for (const slot of anchored) {
+    assert.ok(
+      catalogKeys.has(slot),
+      `[data-slot="${slot}"] 在上游 slot 目录里已经没有了——` +
+        "皮肤这条规则现在匹配不到任何元素，去 slot-catalog.ts 找它的新名字",
+    );
+  }
 });
 
 test("every Harness background reaches the page as an inlined data URI", () => {
